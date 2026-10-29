@@ -1185,3 +1185,30 @@ fn layers_panel_mask_target_isolates_the_curve_channel() {
     let row = isolated_curve_channel_for(s.active().unwrap(), true).expect("quick mask wins");
     assert_eq!((row.name.as_str(), row.gray), ("Quick Mask", Some(GraySurface::QuickMask)));
 }
+
+/// #10152: Channel Options keeps the grey a channel shows, as Photoshop does. An alpha channel
+/// (white inside the rectangle, black around it) turned into a spot channel prints where it was
+/// black, so the ink lands around the rectangle, not on it; turning it back restores the alpha
+/// channel exactly, and one Undo takes back the conversion.
+#[test]
+fn turning_an_alpha_channel_into_a_spot_channel_keeps_its_tone() {
+    let mut s = session();
+    rect(&mut s, 0, 0, 10, 10, "replace");
+    s.execute("channel.new", json!({"fill": "selection"})).unwrap();
+    s.execute("select.deselect", json!({})).unwrap();
+    assert_eq!((chan(&s, 0, 5, 5), chan(&s, 0, 20, 15)), (1.0, 0.0), "white inside, black around");
+    s.execute("channel.options", json!({"channel": 0, "indicates": "spot", "color": "#ff0000", "solidity": 100})).unwrap();
+    assert!(doc(&s).channels[0].spot.is_some());
+    assert_eq!((chan(&s, 0, 5, 5), chan(&s, 0, 20, 15)), (0.0, 1.0), "ink where the channel was black");
+    // Changing only the spot's options keeps its ink.
+    s.execute("channel.options", json!({"channel": 0, "color": "#00ff00"})).unwrap();
+    assert_eq!((chan(&s, 0, 5, 5), chan(&s, 0, 20, 15)), (0.0, 1.0));
+    s.execute("channel.options", json!({"channel": 0, "indicates": "masked"})).unwrap();
+    assert!(doc(&s).channels[0].spot.is_none());
+    assert_eq!((chan(&s, 0, 5, 5), chan(&s, 0, 20, 15)), (1.0, 0.0), "back to the alpha channel it was");
+    s.undo();
+    s.undo();
+    s.undo();
+    assert!(doc(&s).channels[0].spot.is_none());
+    assert_eq!((chan(&s, 0, 5, 5), chan(&s, 0, 20, 15)), (1.0, 0.0), "Undo takes the conversion back");
+}
