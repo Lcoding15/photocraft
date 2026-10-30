@@ -142,6 +142,26 @@ fn layers_in_one_artboard_align_to_it_with_to_artboard() {
     assert!(s.execute("layer.align.leftEdges", json!({"to": "board"})).is_err(), "unknown targets are refused");
 }
 
+/// Review on #10358: two artboards can hold the same rectangle. Layers on different boards align
+/// to the canvas even then — the boards are told apart by which layer they are, not by their size.
+#[test]
+fn layers_on_two_boards_of_the_same_size_align_to_the_canvas() {
+    let mut s = session(8);
+    let rect = json!({"x": 20, "y": 20, "width": 40, "height": 40});
+    let one = add_square(&mut s, Rect::new(25, 25, 35, 35), [1.0, 0.0, 0.0, 1.0]);
+    s.execute("layer.new.artboardFromLayers", json!({})).unwrap();
+    s.execute("layer.artboard.set", rect.clone()).unwrap();
+    let two = add_square(&mut s, Rect::new(100, 100, 110, 110), [0.0, 0.0, 1.0, 1.0]);
+    s.execute("layer.new.artboardFromLayers", json!({})).unwrap();
+    // The second board gets the first one's rectangle, so only their identity tells them apart.
+    s.execute("layer.artboard.set", rect).unwrap();
+    let bounds = |s: &Session, id: LayerId| crate::layer_multi_cmds::layer_bounds(doc(s).layer(id).unwrap()).unwrap();
+    s.execute("layer.select", json!({"layer": one.0})).unwrap();
+    s.execute("layer.select", json!({"layer": two.0, "mode": "add"})).unwrap();
+    s.execute("layer.align.leftEdges", json!({"to": "artboard"})).unwrap();
+    assert_eq!((bounds(&s, one).x0, bounds(&s, two).x0), (0, 0), "two boards, however alike: the canvas");
+}
+
 #[test]
 fn clear_artboard_guides_only_inside() {
     let mut s = session(8);
