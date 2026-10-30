@@ -108,6 +108,41 @@ fn alt_with_a_wheel_scroll_or_a_lost_focus_is_no_tap() {
     assert_eq!(Keys::current(&h.ctx).focus, None, "Alt that went to the desktop leaves the bar alone");
 }
 
+/// #9763: coming back with Alt+Tab on Windows, the window gets Alt's press after the focus, but
+/// its release only as a modifier change (no key event). The mnemonics stayed underlined until
+/// the next Alt press. The sequence is the one logged on Windows 11.
+#[test]
+fn alt_let_go_without_a_key_event_after_alt_tab_stops_underlining() {
+    let mut h = bar();
+    h.event(egui::Event::WindowFocused(true));
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+    h.event_modifiers(
+        egui::Event::Key { key: egui::Key::AltLeft, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::ALT },
+        egui::Modifiers::ALT,
+    );
+    h.run_steps(2);
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run_steps(3);
+    assert!(!Keys::current(&h.ctx).show_underlines(&h.ctx), "Alt is up: no underlines");
+    assert_eq!(Keys::current(&h.ctx).focus, None, "and no keyboard on the bar");
+    // The other order logged there: Alt reported down, then the focus, then nothing at all (the
+    // release went to the window switcher).
+    h.event(egui::Event::WindowFocused(false));
+    h.run_steps(2);
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+    h.event(egui::Event::WindowFocused(true));
+    h.run_steps(3);
+    assert!(h.ctx.input(|i| i.modifiers.alt), "egui still reports Alt down");
+    assert!(!Keys::current(&h.ctx).show_underlines(&h.ctx), "an Alt held for the switcher underlines nothing");
+    // Alt pressed in the window underlines again.
+    h.key_down(egui::Key::AltLeft);
+    h.run_steps(2);
+    assert!(Keys::current(&h.ctx).show_underlines(&h.ctx), "a held Alt shows the mnemonics");
+    h.key_up(egui::Key::AltLeft);
+    h.run_steps(3);
+    assert_eq!(Keys::current(&h.ctx).focus, Some(0), "and letting go of it is a tap, as ever");
+}
+
 /// Alt's own auto-repeat (holding it after Alt+wheel) doesn't make the release a tap again, and
 /// holding Alt alone long enough to repeat is still a tap.
 #[test]
