@@ -35,12 +35,13 @@ fn unsupported(key: &[u8; 4], data: &[u8]) -> Adjustment {
 }
 
 fn levels_rec(d: &[u8], at: usize) -> Option<LevelsChannel> {
+    let at = |off: usize| -> Option<usize> { at.checked_add(off) };
     Some(LevelsChannel {
-        in_black: f32::from(be16(d, at)?) / 255.0,
-        in_white: f32::from(be16(d, at + 2)?) / 255.0,
-        out_black: f32::from(be16(d, at + 4)?) / 255.0,
-        out_white: f32::from(be16(d, at + 6)?) / 255.0,
-        gamma: f32::from(be16(d, at + 8)?) / 100.0,
+        in_black: f32::from(be16(d, at(0)?)?) / 255.0,
+        in_white: f32::from(be16(d, at(2)?)?) / 255.0,
+        out_black: f32::from(be16(d, at(4)?)?) / 255.0,
+        out_white: f32::from(be16(d, at(6)?)?) / 255.0,
+        gamma: f32::from(be16(d, at(8)?)?) / 100.0,
     })
 }
 
@@ -53,7 +54,7 @@ fn parse_curves(d: &[u8]) -> Option<Adjustment> {
         return None;
     }
     let bits = u32::from_be_bytes(d.get(3..7)?.try_into().ok()?);
-    let mut at = 7;
+    let mut at = 7usize;
     let line = || vec![CurvePoint { input: 0.0, output: 0.0 }, CurvePoint { input: 1.0, output: 1.0 }];
     let mut curves: Vec<Vec<CurvePoint>> = vec![line(), line(), line(), line(), line()];
     for bit in 0..32usize {
@@ -61,20 +62,20 @@ fn parse_curves(d: &[u8]) -> Option<Adjustment> {
             continue;
         }
         if pencil {
-            let map = d.get(at..at + CURVE_MAP_LEN)?;
-            at += CURVE_MAP_LEN;
+            let map = d.get(at..at.checked_add(CURVE_MAP_LEN)?)?;
+            at = at.checked_add(CURVE_MAP_LEN)?;
             if let Some(slot) = curves.get_mut(bit) {
                 *slot = curve_map(&map.iter().map(|&b| f32::from(b) / 255.0).collect::<Vec<_>>());
             }
             continue;
         }
         let n = usize::from(be16(d, at)?);
-        at += 2;
+        at = at.checked_add(2)?;
         let mut pts = Vec::with_capacity(n.min(64));
         for _ in 0..n {
             let out = be16(d, at)?;
-            let inp = be16(d, at + 2)?;
-            at += 4;
+            let inp = be16(d, at.checked_add(2)?)?;
+            at = at.checked_add(4)?;
             pts.push(CurvePoint { input: f32::from(inp) / 255.0, output: f32::from(out) / 255.0 });
         }
         if let Some(slot) = curves.get_mut(bit) {
@@ -302,23 +303,24 @@ fn parse_gradient_map(d: &[u8]) -> Option<Adjustment> {
     // The gradient's name (UTF-16 units); checked, as `len * 2` overflows a 32-bit `usize`.
     at = (be32(d, at)? as usize).checked_mul(2)?.checked_add(at.checked_add(4)?)?;
     let n = usize::from(be16(d, at)?);
-    at += 2;
+    at = at.checked_add(2)?;
     let mut stops = Vec::with_capacity(n);
     let mut mids = Vec::with_capacity(n);
     for _ in 0..n {
         let loc = (be32(d, at)? as f32 / 4096.0).clamp(0.0, 1.0);
-        let mid = be32(d, at + 4)? as f32 / 100.0;
-        let space = be16(d, at + 8)?;
-        let c = |k: usize| be16(d, at + 10 + 2 * k);
+        let mid = be32(d, at.checked_add(4)?)? as f32 / 100.0;
+        let space = be16(d, at.checked_add(8)?)?;
+        let c = |k: usize| be16(d, at.checked_add(10)?.checked_add(k.checked_mul(2)?)?);
         stops.push((loc, crate::channel_map::decode_known_color(space, [c(0)?, c(1)?, c(2)?, c(3)?])?));
         mids.push(mid);
-        at += 20;
+        at = at.checked_add(20)?;
     }
     if stops.len() < 2 {
         return None;
     }
     let nt = usize::from(be16(d, at)?);
-    at += 2 + nt * 10 + 2; // transparency stops, expansion count
+    // transparency stops, expansion count
+    at = at.checked_add(4)?.checked_add(nt.checked_mul(10)?)?;
     let smooth = f32::from(be16(d, at)?) / 4096.0;
     // Midpoint k applies to the segment after stop k (in location order).
     let mut order: Vec<usize> = (0..stops.len()).collect();

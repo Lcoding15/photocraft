@@ -339,6 +339,33 @@ mod tests {
         assert_eq!(slice_layout(1, usize::MAX, 1), None, "n × w + last overflows");
     }
 
+    /// #8615 (review): the same through the decoder, with the tag as the LONGs a real file holds
+    /// (`Cr2Spec` writes SHORTs, which can't reach these widths). Two slices of 2^31 are refused
+    /// — on wasm32 `n * w` would wrap to a small width that passes the size limits, here it is
+    /// the width that no 8-pixel frame can match. Either way: an error, never a wrapped read.
+    #[test]
+    fn a_slice_table_too_wide_for_the_frame_is_refused_by_the_decoder() {
+        use crate::testgen::Cr2Spec;
+
+        let spec = Cr2Spec {
+            width: 8,
+            height: 8,
+            data: vec![2048u16; 64],
+            precision: 12,
+            components: 1,
+            slices: Vec::new(),
+            slices_long: Some([2, 0x8000_0000, 1]),
+            borders: None,
+            wb_rggb: None,
+            orientation: 1,
+            model_id: None,
+        };
+        let bytes = spec.build();
+        let err = crate::decode(&bytes, &crate::Limits::default()).expect_err("the slice table is refused");
+        let text = err.to_string();
+        assert!(text.contains("slices") || text.contains("too large"), "{text}");
+    }
+
     #[test]
     fn red_row_measurement_never_panics_on_odd_geometry() {
         let data = vec![1000u16; 64 * 32];
@@ -411,6 +438,7 @@ mod wb_words {
             precision: 12,
             components: 1,
             slices: Vec::new(),
+            slices_long: None,
             borders: None,
             wb_rggb: Some([1613, 951, 951, 1605]),
             orientation: 1,
@@ -439,6 +467,7 @@ mod wb_words {
             precision: 12,
             components: 1,
             slices: Vec::new(),
+            slices_long: None,
             borders: None,
             wb_rggb: None,
             orientation: 1,
