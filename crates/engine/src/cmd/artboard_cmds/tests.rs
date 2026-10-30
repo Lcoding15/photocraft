@@ -753,3 +753,22 @@ fn select_all_selects_the_active_artboard() {
     let (w, h) = (doc(&plain).size.width as i32, doc(&plain).size.height as i32);
     assert_eq!((selected(&plain, 0, 0), selected(&plain, w - 1, h - 1)), (1.0, 1.0));
 }
+
+/// A board the canvas cuts off selects only the part inside it; a board cropped away entirely
+/// selects the canvas, never an empty selection that would block painting.
+#[test]
+fn select_all_clips_the_active_artboard_to_the_canvas() {
+    let mut s = session(8);
+    let first = board_with_square(&mut s);
+    let r = s.execute("layer.artboard.addBeside", json!({"layer": first.0, "side": "right"})).unwrap();
+    let second = LayerId(r["layer"].as_u64().unwrap());
+    s.execute("image.canvasSize", json!({"width": 30, "height": 30, "anchor": "topLeft"})).unwrap();
+    assert_eq!((doc(&s).size.width, doc(&s).size.height, board_rect(&s, first.0)), (30, 30, Rect::new(10, 10, 50, 50)));
+    let selected = |s: &Session, x: i32, y: i32| doc(s).selection.as_ref().map_or(0.0, |m| m.sample_channel(x, y, 0));
+    s.execute("layer.select", json!({"layer": first.0, "mode": "replace"})).unwrap();
+    s.execute("select.all", json!({})).unwrap();
+    assert_eq!((selected(&s, 29, 29), selected(&s, 5, 5), selected(&s, 30, 30)), (1.0, 0.0, 0.0), "the board, clipped");
+    s.execute("layer.select", json!({"layer": second.0, "mode": "replace"})).unwrap();
+    s.execute("select.all", json!({})).unwrap();
+    assert_eq!((selected(&s, 0, 0), selected(&s, 29, 29)), (1.0, 1.0), "a board off the canvas selects the canvas");
+}

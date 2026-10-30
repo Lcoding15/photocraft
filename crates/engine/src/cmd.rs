@@ -348,7 +348,9 @@ fn build() -> Vec<CommandSpec> {
             let active = s.active().and_then(|d| d.active_layer);
             s.edit("Select All", |doc, _| {
                 let board = active.and_then(|id| doc.artboard_of(id)).and_then(|id| doc.layer(id)).and_then(|l| l.artboard()).map(|a| a.rect);
-                let area = board.map_or(doc.bounds(), |r| r.intersect(&doc.bounds()));
+                // A board the canvas no longer reaches (cropped away) selects the canvas, never an
+                // empty selection that would block painting.
+                let area = board.map(|r| r.intersect(&doc.bounds())).filter(|r| !r.is_empty()).unwrap_or_else(|| doc.bounds());
                 let mut m = Surface::new(photocraft_color::PixelFormat::GRAY8);
                 m.fill_rect(area, &[1.0]);
                 doc.selection = Some(m);
