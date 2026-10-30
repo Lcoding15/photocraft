@@ -358,9 +358,9 @@ pub(crate) fn show_properties(app: &mut PhotocraftApp) {
         app.ui.status = e;
         app.ui.status_error = true;
     }
-    app.ui.panels.properties = true;
+    // The classic dock: on the Properties tab, shown even when that tab was hidden, expanded.
     app.ui.dock_tabs.properties = 0;
-    app.ui.dock.collapsed.retain(|g| *g != crate::dock::Group::Properties);
+    crate::dock::reveal(app, crate::dock::Group::Properties);
 }
 
 pub(crate) fn command(app: &mut PhotocraftApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
