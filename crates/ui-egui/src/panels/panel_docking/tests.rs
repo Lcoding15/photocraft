@@ -891,3 +891,19 @@ fn the_native_dock_width_sizes_the_default_column() {
     assert_eq!(columns[0].width, 380.0);
     assert!(h.ctx.data_mut(|data| data.get_persisted::<egui::PanelState>(key)).is_none(), "taken once");
 }
+
+/// #10255: with Properties closed in a customized workspace, opening an adjustment layer's
+/// settings (its thumbnail's double-click, Layer Content Options) brings the panel back on its
+/// Properties tab, as Window › Properties does, instead of setting a flag the layout ignores.
+#[test]
+fn opening_an_adjustment_layers_settings_shows_a_closed_properties_panel() {
+    let mut app = app();
+    app.run("file.new", json!({"width": 64, "height": 64})).unwrap();
+    app.run("layer.newAdjustmentLayer.curves", json!({})).unwrap();
+    app.ui.docking = Some(Workspace::new(legacy(&app)));
+    app.run("window.panel.close", json!({"panel": "properties"})).unwrap();
+    assert!(!lay(&app).contains(&"properties".to_string()), "closed");
+    crate::menus::invoke(&mut app, &egui::Context::default(), "layer.layerContentOptions", json!({})).unwrap();
+    assert!(lay(&app).contains(&"properties".to_string()), "{:?}", lay(&app));
+    assert!(app.ui.panels.properties && app.ui.dock_tabs.properties == 0);
+}

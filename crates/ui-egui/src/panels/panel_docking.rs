@@ -348,6 +348,21 @@ fn closes(command: &DockCommand<String>) -> bool {
     )
 }
 
+/// Show the Properties panel on its Properties tab, as double-clicking a layer's thumbnail does:
+/// in a docking workspace through the same command as Window › Properties (a panel closed
+/// there stays closed however its flag is set, #10255), and in the classic dock by its flags.
+pub(crate) fn show_properties(app: &mut PhotocraftApp) {
+    if app.ui.docking.is_some()
+        && let Some(Err(e)) = command(app, "window.panel.properties", &json!({"show": true}))
+    {
+        app.ui.status = e;
+        app.ui.status_error = true;
+    }
+    app.ui.panels.properties = true;
+    app.ui.dock_tabs.properties = 0;
+    app.ui.dock.collapsed.retain(|g| *g != crate::dock::Group::Properties);
+}
+
 pub(crate) fn command(app: &mut PhotocraftApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if id == "window.panel.group" {
         return Some(group_command(app, params));
