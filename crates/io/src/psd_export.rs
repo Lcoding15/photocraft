@@ -309,15 +309,20 @@ impl Ex {
             LayerContent::Shape(sh) if l.vector_mask.is_none() => Some((sh.density, sh.feather)),
             _ => l.vector_mask.as_ref().map(|vm| (vm.density, vm.feather)),
         };
+        let mut user_mask = false;
         if let Some(m) = &l.mask {
             match self.mask(m, vector) {
                 Ok((md, ch)) => {
                     mask = md;
                     channels.extend(ch);
+                    user_mask = true;
                 }
                 Err(e) => self.warnings.push(format!("layer \"{}\": its layer mask could not be encoded ({e}): saved without it", l.name)),
             }
-        } else if let Some(parameters) = mask_parameters(None, vector) {
+        }
+        // No user mask written (none, or one that couldn't be encoded): the vector mask's density
+        // and feather still go in as parameters.
+        if !user_mask && let Some(parameters) = mask_parameters(None, vector) {
             // Parameters only: no user mask channel, so nothing hides on re-import.
             mask = MaskData::Mask(PsdMask {
                 rect: PsdRect::default(),
