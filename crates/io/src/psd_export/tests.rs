@@ -568,3 +568,41 @@ fn alpha_names_count_the_merged_transparency() {
     assert_eq!(back.channels[0].name, "Alpha 1");
     assert!((back.channels[0].opacity - 0.5).abs() < 1e-6);
 }
+
+/// A writer for `doc` with nothing else set, for testing its channel encoding on its own.
+fn writer(doc: &Document) -> Ex {
+    Ex {
+        fmt: doc.pixel_format(),
+        dpi: 72.0,
+        document: None,
+        read_linked_files: false,
+        text_styles: Default::default(),
+        text_index: Default::default(),
+        mask_fmt: PixelFormat::new(ColorMode::Grayscale, SampleType::U8, false),
+        cc: 3,
+        cmyk: false,
+        version: Version::Psd,
+        next_id: 0,
+        used_ids: Default::default(),
+        layer_ids: Default::default(),
+        canvas: doc.bounds(),
+        records: Vec::new(),
+        warnings: Vec::new(),
+        guides: Default::default(),
+        comps: None,
+        smart: SmartOut::new(doc, 8),
+        patterns: Vec::new(),
+        background: None,
+    }
+}
+
+/// #8612: a channel that can't be encoded, even raw, is an error, not a raw plane of the wrong
+/// size that this reader rejects (the layer would reopen empty without a word). A zero-sized
+/// channel and a channel of the right size still encode.
+#[test]
+fn a_channel_that_cannot_be_encoded_is_an_error_not_a_wrong_raw_plane() {
+    let ex = writer(&document(4, 4));
+    assert!(ex.encode(0, &[1, 2, 3], 10, 10).is_err(), "3 bytes are not a 10×10 plane");
+    assert!(ex.encode(0, &[7; 16], 4, 4).is_ok());
+    assert_eq!(ex.empty_channels().len(), 4, "transparency and three colours, each empty");
+}

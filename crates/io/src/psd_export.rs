@@ -180,7 +180,10 @@ impl Ex {
         if self.fmt.sample == SampleType::F32 { Compression::ZipPrediction } else { Compression::Rle }
     }
 
-    fn encode(&self, id: i16, plane: &[u8], w: usize, h: usize) -> ChannelData {
+    /// One channel, compressed, else raw. An error when even raw encoding fails: writing the
+    /// plane anyway would store a channel this reader rejects, so the layer would reopen empty
+    /// without a word (#8612).
+    fn encode(&self, id: i16, plane: &[u8], w: usize, h: usize) -> Result<ChannelData, String> {
         let depth = psd_depth(self.fmt.sample);
         // Photoshop writes empty layer/mask channels as just the raw compression code.
         // A ZIP stream for a zero-sized channel makes readers try to decompress an
@@ -188,11 +191,12 @@ impl Ex {
         let compression = if w == 0 || h == 0 { Compression::Raw } else { self.compression() };
         ChannelData::encode(id, compression, plane, w, h, depth, self.version)
             .or_else(|_| ChannelData::encode(id, Compression::Raw, plane, w, h, depth, self.version))
-            .unwrap_or(ChannelData::new(id, Some(Compression::Raw), plane.to_vec()))
+            .map_err(|e| e.to_string())
     }
 
     fn empty_channels(&self) -> Vec<ChannelData> {
-        (-1..self.cc as i16).map(|id| self.encode(id, &[], 0, 0)).collect()
+        // A zero-sized channel is just its compression code: nothing to encode, nothing to fail.
+        (-1..self.cc as i16).map(|id| self.encode(id, &[], 0, 0).unwrap_or_else(|_| ChannelData::new(id, Some(Compression::Raw), Vec::new()))).collect()
     }
 
     fn pixel_channels(&self, s: &Surface, name: &str) -> (PsdRect, Vec<ChannelData>, Vec<String>) {
@@ -236,10 +240,16 @@ impl Ex {
         let order: Vec<(i16, &Vec<u8>)> =
             std::iter::once((-1, &planes[self.cc])).chain(planes.iter().take(self.cc).enumerate().map(|(c, p)| (c as i16, p))).collect();
         let ch = crate::pixels::par_map(order, |(id, plane)| self.encode(id, plane, w, h));
-        (to_psd_rect(r), ch, warnings)
+        match ch.into_iter().collect::<Result<Vec<_>, _>>() {
+            Ok(ch) => (to_psd_rect(r), ch, warnings),
+            Err(e) => {
+                warnings.push(format!("layer \"{name}\": its pixels could not be encoded ({e}): saved without its pixels"));
+                (PsdRect::default(), self.empty_channels(), warnings)
+            }
+        }
     }
 
-    fn mask(&self, m: &LayerMask, vector: Option<(f32, f32)>) -> (MaskData, Option<ChannelData>) {
+    fn mask(&self, m: &LayerMask, vector: Option<(f32, f32)>) -> Result<(MaskData, Option<ChannelData>), String> {
         let s = if m.surface.format() != self.mask_fmt { m.surface.convert(self.mask_fmt) } else { m.surface.clone() };
         let default = s.default_pixel().first().copied().unwrap_or(0.0);
         let r = s.content_bounds();
@@ -265,7 +275,7 @@ impl Ex {
             real: None,
             real_first: true,
         };
-        (MaskData::Mask(pm), Some(self.encode(-2, &plane, w, h)))
+        Ok((MaskData::Mask(pm), Some(self.encode(-2, &plane, w, h)?)))
     }
 
     /// Prefer numbers above imported layer IDs, wrapping safely at u32::MAX.
@@ -300,9 +310,13 @@ impl Ex {
             _ => l.vector_mask.as_ref().map(|vm| (vm.density, vm.feather)),
         };
         if let Some(m) = &l.mask {
-            let (md, ch) = self.mask(m, vector);
-            mask = md;
-            channels.extend(ch);
+            match self.mask(m, vector) {
+                Ok((md, ch)) => {
+                    mask = md;
+                    channels.extend(ch);
+                }
+                Err(e) => self.warnings.push(format!("layer \"{}\": its layer mask could not be encoded ({e}): saved without it", l.name)),
+            }
         } else if let Some(parameters) = mask_parameters(None, vector) {
             // Parameters only: no user mask channel, so nothing hides on re-import.
             mask = MaskData::Mask(PsdMask {
