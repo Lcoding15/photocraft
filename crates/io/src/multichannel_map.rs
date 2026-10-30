@@ -41,7 +41,9 @@ fn sample<const N: usize>(plane: &[u8], i: usize) -> Option<[u8; N]> {
 }
 
 /// Fills `doc` (already in Multichannel mode at the file depth) from the merged planes `all`.
-pub(crate) fn import(file: &PsdFile, all: &[u8], doc: &mut Document, names: &[String], warnings: &mut Vec<String>) {
+/// `Err` when the planes are too large to read here: the caller reports the document as
+/// damaged, since its channels are missing.
+pub(crate) fn import(file: &PsdFile, all: &[u8], doc: &mut Document, names: &[String], warnings: &mut Vec<String>) -> Result<(), String> {
     let h = &file.header;
     let depth = doc.depth;
     let (w, hh) = (h.width as usize, h.height as usize);
@@ -54,8 +56,7 @@ pub(crate) fn import(file: &PsdFile, all: &[u8], doc: &mut Document, names: &[St
             .is_some_and(|bytes| u64::try_from(bytes).is_ok_and(|b| b <= photocraft_psd::compression::MAX_DECODED_BYTES) && isize::try_from(bytes).is_ok())
     };
     let (Some(n), Some(plane)) = (w.checked_mul(hh).filter(|n| fits(*n)), h.row_bytes().checked_mul(hh)) else {
-        warnings.push("multichannel: the image is too large to read here".into());
-        return;
+        return Err("multichannel: the image is too large to read here".into());
     };
     let canvas = Rect::new(0, 0, h.width as i32, h.height as i32);
     let fmt = PixelFormat::new(ColorMode::Grayscale, depth, false);
@@ -87,6 +88,7 @@ pub(crate) fn import(file: &PsdFile, all: &[u8], doc: &mut Document, names: &[St
         s.prune();
         ch.surface = s;
     }
+    Ok(())
 }
 
 /// Writes a Multichannel document as a mode-7 PSD (no layer section; every channel a plane).
