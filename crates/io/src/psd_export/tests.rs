@@ -628,3 +628,23 @@ fn a_layer_past_the_psd_size_limit_is_saved_without_its_pixels() {
     assert_eq!((rect.width(), rect.height(), channels.len(), warnings.len()), (2, 1, 4, 0));
     assert!(within_psd_limit(Rect::new(0, 0, 300_000, 300_000)) && !within_psd_limit(Rect::new(0, 0, 1, 300_001)));
 }
+
+/// A mask is held to the same limits: one past 300000 px, and a sparse one within it whose box
+/// is too large to gather, are errors (the caller saves the layer without the mask), never a
+/// huge dense buffer. A small mask still writes its channel.
+#[test]
+fn a_mask_past_the_size_limits_is_an_error() {
+    use photocraft_geom::Rect;
+    let ex = writer(&document(4, 4));
+    let mask = |points: &[(i32, i32)]| {
+        let mut m = photocraft_doc::LayerMask::hide_all();
+        for &(x, y) in points {
+            m.surface.write_region(Rect::new(x, y, x + 1, y + 1), &[1.0]);
+        }
+        m
+    };
+    assert!(ex.mask(&mask(&[(0, 0), (300_000, 0)]), None).is_err(), "past 300000 px");
+    assert!(ex.mask(&mask(&[(0, 0), (299_998, 299_998)]), None).is_err(), "a sparse box too large to gather");
+    let (_, channel) = ex.mask(&mask(&[(0, 0), (1, 1)]), None).unwrap();
+    assert!(channel.is_some());
+}

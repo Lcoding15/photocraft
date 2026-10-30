@@ -264,6 +264,12 @@ impl Ex {
         if !within_psd_limit(r) {
             return Err(format!("it spans {}×{} px, past the PSD limit of {} px", r.width(), r.height(), photocraft_psd::header::MAX_DIMENSION));
         }
+        // The mask is gathered as one dense rectangle too: a few pixels far apart within the
+        // limit can still make a box too large to gather, as a layer's can.
+        let dense = u64::from(r.width()).saturating_mul(u64::from(r.height())).saturating_mul(s.format().bytes_per_pixel() as u64);
+        if dense > MAX_LAYER_GATHER_BYTES {
+            return Err(format!("it spans {}×{} px, too large to write", r.width(), r.height()));
+        }
         let (w, h) = (r.width() as usize, r.height() as usize);
         let plane = if r.is_empty() { Vec::new() } else { deinterleave(&s.to_interleaved(r), 1, self.mask_fmt.sample, &[false]).remove(0) };
         let mut flags = 0u8;
