@@ -366,6 +366,31 @@ mod tests {
         assert!(text.contains("slices") || text.contains("too large"), "{text}");
     }
 
+    /// Review on #10257: a LONG table the decoder does accept lays the fixture's samples out as
+    /// its slices say, so the picture comes back as written (the same table as SHORTs would).
+    #[test]
+    fn a_long_slice_table_the_decoder_accepts_round_trips() {
+        use crate::testgen::Cr2Spec;
+
+        let data: Vec<u16> = (0..64u16).map(|i| i * 32).collect();
+        let spec = Cr2Spec {
+            width: 8,
+            height: 8,
+            data: data.clone(),
+            precision: 12,
+            components: 1,
+            slices: Vec::new(),
+            slices_long: Some([3, 2, 2]),
+            borders: None,
+            wb_rggb: None,
+            orientation: 1,
+            model_id: None,
+        };
+        let s = crate::decode(&spec.build(), &crate::Limits::default()).expect("decode");
+        assert_eq!((s.width, s.height), (8, 8));
+        assert_eq!(s.data, data, "the slices are put back where they came from");
+    }
+
     #[test]
     fn red_row_measurement_never_panics_on_odd_geometry() {
         let data = vec![1000u16; 64 * 32];
