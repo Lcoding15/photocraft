@@ -143,6 +143,30 @@ fn alt_let_go_without_a_key_event_after_alt_tab_stops_underlining() {
     assert_eq!(Keys::current(&h.ctx).focus, Some(0), "and letting go of it is a tap, as ever");
 }
 
+/// Review on #10383: Alt held *in the window*, then Alt+Tab away and back, with the release going
+/// to the window switcher and no modifier change arriving at all. The press was this window's, so
+/// a focus change is the last word on it: the mnemonics stop being underlined.
+#[test]
+fn an_alt_held_before_alt_tab_stops_underlining_on_the_way_back() {
+    let mut h = bar();
+    h.key_down(egui::Key::AltLeft);
+    h.run_steps(2);
+    assert!(Keys::current(&h.ctx).show_underlines(&h.ctx), "a held Alt underlines");
+    h.event(egui::Event::WindowFocused(false));
+    h.run_steps(2);
+    h.event(egui::Event::WindowFocused(true));
+    h.run_steps(3);
+    assert!(!Keys::current(&h.ctx).show_underlines(&h.ctx), "the release went to the switcher: nothing underlined");
+    assert_eq!(Keys::current(&h.ctx).focus, None, "and no keyboard on the bar");
+    // Alt pressed again in the window still works.
+    h.key_down(egui::Key::AltLeft);
+    h.run_steps(2);
+    assert!(Keys::current(&h.ctx).show_underlines(&h.ctx));
+    h.key_up(egui::Key::AltLeft);
+    h.run_steps(3);
+    assert_eq!(Keys::current(&h.ctx).focus, Some(0), "and is a tap, as ever");
+}
+
 /// Alt's own auto-repeat (holding it after Alt+wheel) doesn't make the release a tap again, and
 /// holding Alt alone long enough to repeat is still a tap.
 #[test]

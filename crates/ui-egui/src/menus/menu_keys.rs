@@ -346,7 +346,12 @@ impl Keys {
                 }
                 // Back from Alt+Tab, the window can get the focus with Alt reported down and then
                 // never hear of its release, which went to the window switcher (#9763).
-                Event::WindowFocused(true) => self.alt_at_focus = true,
+                // An Alt this window did see pressed is no longer ours either: its release can go
+                // to the switcher, and no modifier change need follow (#9763).
+                Event::WindowFocused(true) => {
+                    self.alt_down = false;
+                    self.alt_at_focus = true;
+                }
                 // Alt+wheel (zoom, brush size…) is no tap either.
                 Event::Key { pressed: true, .. } | Event::Text(_) | Event::MouseWheel { .. } => self.alt_tap = false,
                 _ => {}
