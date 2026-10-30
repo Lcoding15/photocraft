@@ -606,3 +606,25 @@ fn a_channel_that_cannot_be_encoded_is_an_error_not_a_wrong_raw_plane() {
     assert!(ex.encode(0, &[7; 16], 4, 4).is_ok());
     assert_eq!(ex.empty_channels().len(), 4, "transparency and three colours, each empty");
 }
+
+/// #8612: a layer wider than a PSD layer may be (the reader's 300000 px) is saved without its
+/// pixels and says so, instead of a rect the reader refuses. One within the limit keeps them.
+#[test]
+fn a_layer_past_the_psd_size_limit_is_saved_without_its_pixels() {
+    use photocraft_geom::Rect;
+    let doc = document(4, 4);
+    let ex = writer(&doc);
+    let fmt = doc.pixel_format();
+    let one = vec![1.0; fmt.channels()];
+    let mut wide = Surface::new(fmt);
+    wide.write_region(Rect::new(0, 0, 1, 1), &one);
+    wide.write_region(Rect::new(300_000, 0, 300_001, 1), &one);
+    let (rect, _, warnings) = ex.pixel_channels(&wide, "Wide");
+    assert_eq!(rect, PsdRect::default());
+    assert!(warnings.iter().any(|w| w.contains("\"Wide\"") && w.contains("saved without its pixels")), "{warnings:?}");
+    let mut small = Surface::new(fmt);
+    small.write_region(Rect::new(0, 0, 2, 1), &[one.clone(), one].concat());
+    let (rect, channels, warnings) = ex.pixel_channels(&small, "Small");
+    assert_eq!((rect.width(), rect.height(), channels.len(), warnings.len()), (2, 1, 4, 0));
+    assert!(within_psd_limit(Rect::new(0, 0, 300_000, 300_000)) && !within_psd_limit(Rect::new(0, 0, 1, 300_001)));
+}

@@ -175,6 +175,12 @@ fn q255(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
+/// Whether a layer or mask rect is within what a PSD layer may span (the reader's limit, so a
+/// written layer reopens with its pixels).
+fn within_psd_limit(r: photocraft_geom::Rect) -> bool {
+    r.width() <= photocraft_psd::header::MAX_DIMENSION && r.height() <= photocraft_psd::header::MAX_DIMENSION
+}
+
 impl Ex {
     fn compression(&self) -> Compression {
         if self.fmt.sample == SampleType::F32 { Compression::ZipPrediction } else { Compression::Rle }
@@ -214,7 +220,9 @@ impl Ex {
         // A layer record is one dense rectangle, so a few pixels far apart make a box of mostly
         // nothing, gathered and then copied again. Past the cap the layer is saved empty, said so.
         let dense = u64::from(r.width()).saturating_mul(u64::from(r.height())).saturating_mul(s.format().bytes_per_pixel() as u64);
-        if dense > MAX_LAYER_GATHER_BYTES {
+        // Nor wider or taller than a PSD layer may be: the reader refuses such a rect, so the
+        // layer would reopen empty (#8612).
+        if dense > MAX_LAYER_GATHER_BYTES || !within_psd_limit(r) {
             warnings.push(format!("layer \"{name}\" spans {}×{} px, too large to write: saved without its pixels", r.width(), r.height()));
             return (PsdRect::default(), self.empty_channels(), warnings);
         }
@@ -253,6 +261,9 @@ impl Ex {
         let s = if m.surface.format() != self.mask_fmt { m.surface.convert(self.mask_fmt) } else { m.surface.clone() };
         let default = s.default_pixel().first().copied().unwrap_or(0.0);
         let r = s.content_bounds();
+        if !within_psd_limit(r) {
+            return Err(format!("it spans {}×{} px, past the PSD limit of {} px", r.width(), r.height(), photocraft_psd::header::MAX_DIMENSION));
+        }
         let (w, h) = (r.width() as usize, r.height() as usize);
         let plane = if r.is_empty() { Vec::new() } else { deinterleave(&s.to_interleaved(r), 1, self.mask_fmt.sample, &[false]).remove(0) };
         let mut flags = 0u8;
