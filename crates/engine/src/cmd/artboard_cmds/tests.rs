@@ -113,6 +113,35 @@ fn a_lone_layer_in_an_artboard_aligns_to_the_artboard() {
     }
 }
 
+/// #10337: Align To Canvas (`to: artboard`) keeps several layers of one artboard on it, aligned to
+/// its edges; layers on no board, or on different boards, align to the canvas.
+#[test]
+fn layers_in_one_artboard_align_to_it_with_to_artboard() {
+    let mut s = session(8);
+    let red = add_square(&mut s, Rect::new(10, 10, 20, 20), [1.0, 0.0, 0.0, 1.0]);
+    let blue = add_square(&mut s, Rect::new(30, 30, 40, 40), [0.0, 0.0, 1.0, 1.0]);
+    s.execute("layer.select", json!({"layer": red.0, "mode": "add"})).unwrap();
+    s.execute("layer.new.artboardFromLayers", json!({})).unwrap();
+    s.execute("layer.artboard.set", json!({"x": 140, "y": 20, "width": 50, "height": 50})).unwrap();
+    let bounds = |s: &Session, id: LayerId| crate::layer_multi_cmds::layer_bounds(doc(s).layer(id).unwrap()).unwrap();
+    let (r0, b0) = (bounds(&s, red), bounds(&s, blue));
+    assert!(r0.x0 >= 140 && b0.x0 >= 140, "both moved onto the board: {r0:?} {b0:?}");
+
+    s.execute("layer.select", json!({"layer": red.0})).unwrap();
+    s.execute("layer.select", json!({"layer": blue.0, "mode": "add"})).unwrap();
+    s.execute("layer.align.rightEdges", json!({"to": "artboard"})).unwrap();
+    assert_eq!((bounds(&s, red).x1, bounds(&s, blue).x1), (190, 190), "to the board's right edge");
+    s.execute("layer.align.topEdges", json!({"to": "artboard"})).unwrap();
+    assert_eq!((bounds(&s, red).y0, bounds(&s, blue).y0), (20, 20), "to the board's top edge");
+
+    // A layer on no board in the selection: the canvas.
+    let green = add_square(&mut s, Rect::new(5, 60, 15, 70), [0.0, 1.0, 0.0, 1.0]);
+    s.execute("layer.select", json!({"layer": red.0, "mode": "add"})).unwrap();
+    s.execute("layer.align.leftEdges", json!({"to": "artboard"})).unwrap();
+    assert_eq!((bounds(&s, red).x0, bounds(&s, green).x0), (0, 0), "mixed: to the canvas");
+    assert!(s.execute("layer.align.leftEdges", json!({"to": "board"})).is_err(), "unknown targets are refused");
+}
+
 #[test]
 fn clear_artboard_guides_only_inside() {
     let mut s = session(8);

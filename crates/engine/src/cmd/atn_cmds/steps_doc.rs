@@ -503,7 +503,12 @@ pub(super) fn align_from(d: &Descriptor) -> Mapped {
 
 pub(super) fn align_to(id: &str, p: &Value) -> Option<Descriptor> {
     let a = lookup_back(ALIGN, id.strip_prefix("layer.align.")?)?;
-    Some(desc("null").with("null", target_ref("Lyr ")).with("Usng", enm("ADSt", a)).with("alignToCanvas", D::Boolean(jstr(p, "to") == Some("canvas"))))
+    Some(
+        desc("null")
+            .with("null", target_ref("Lyr "))
+            .with("Usng", enm("ADSt", a))
+            .with("alignToCanvas", D::Boolean(matches!(jstr(p, "to"), Some("canvas" | "artboard")))),
+    )
 }
 
 pub(super) fn purge_from(d: &Descriptor) -> Mapped {

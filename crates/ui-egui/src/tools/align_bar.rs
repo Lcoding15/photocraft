@@ -29,10 +29,11 @@ const DISTRIBUTE: [(&str, &str, &str); 8] = [
 ];
 
 /// The parameters of a `layer.align.*` run from the Move tool or Properties: Align To Canvas
-/// sends `to: canvas`; Selection leaves the engine's own choice (the selection's bounds, else the
-/// layers', a lone layer's canvas or artboard) (#10337).
+/// sends `to: artboard` (the artboard the layers share, else the canvas); Selection leaves the
+/// engine's own choice (the selection's bounds, else the layers', a lone layer's canvas or
+/// artboard) (#10337).
 pub(crate) fn align_params(app: &PhotocraftApp) -> Value {
-    if app.ui.tool_options.move_align_to_canvas { json!({"to": "canvas"}) } else { json!({}) }
+    if app.ui.tool_options.move_align_to_canvas { json!({"to": "artboard"}) } else { json!({}) }
 }
 
 fn align_to_label(canvas: bool) -> &'static str {
