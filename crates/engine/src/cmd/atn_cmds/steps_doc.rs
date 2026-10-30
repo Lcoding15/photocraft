@@ -496,7 +496,9 @@ pub(super) fn merge_visible_to(id: &str, _: &Value) -> Option<Descriptor> {
 
 pub(super) fn align_from(d: &Descriptor) -> Mapped {
     match get_enum(d, "Usng").and_then(|u| lookup(ALIGN, &u)) {
-        Some(a) => step(&format!("layer.align.{a}"), if get_bool(d, "alignToCanvas") == Some(true) { json!({"to": "canvas"}) } else { json!({}) }),
+        // Photoshop's one flag means "the board the layers sit on, else the canvas", which is
+        // `artboard` here; plain `canvas` is PhotoCraft's own and reads back as that (#10337).
+        Some(a) => step(&format!("layer.align.{a}"), if get_bool(d, "alignToCanvas") == Some(true) { json!({"to": "artboard"}) } else { json!({}) }),
         None => Mapped::Unsupported { harmless: false },
     }
 }
