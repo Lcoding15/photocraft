@@ -279,7 +279,7 @@ fn parse_any(key: &[u8; 4], data: &[u8], cged: Option<&[u8]>) -> Adjustment {
 }
 
 fn be32(d: &[u8], at: usize) -> Option<u32> {
-    d.get(at..at + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    d.get(at..at.checked_add(4)?).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
 }
 
 /// `grdm` (Adobe spec, "Gradient settings"): version (1, or 3 with an interpolation method
@@ -300,7 +300,7 @@ fn parse_gradient_map(d: &[u8]) -> Option<Adjustment> {
         _ => return None,
     };
     // The gradient's name (UTF-16 units); checked, as `len * 2` overflows a 32-bit `usize`.
-    at = (be32(d, at)? as usize).checked_mul(2)?.checked_add(at + 4)?;
+    at = (be32(d, at)? as usize).checked_mul(2)?.checked_add(at.checked_add(4)?)?;
     let n = usize::from(be16(d, at)?);
     at += 2;
     let mut stops = Vec::with_capacity(n);
