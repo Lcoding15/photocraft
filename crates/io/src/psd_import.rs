@@ -337,8 +337,12 @@ impl Ctx<'_> {
         let mut surface = Surface::with_default(self.mask_fmt, &[f32::from(default) / 255.0]);
         if !rect.is_empty()
             && let Ok((w, h)) = rect.size()
-            // Checked: a mask rect's pixel count need not fit a 32-bit `usize` (#8615).
-            && let Some(n) = w.checked_mul(h)
+            // Checked: a mask rect's pixel count need not fit a 32-bit `usize` (#8615); such a
+            // mask is reported as unreadable, as an undecodable mask channel is.
+            && let Some(n) = w.checked_mul(h).or_else(|| {
+                self.warn_unreadable_data(format!("layer \"{name}\": the mask is too large to decode; it was ignored"));
+                None
+            })
             && let Some(plane) = self.channel_plane(rec, id, name)
         {
             let s = self.mask_fmt.sample;

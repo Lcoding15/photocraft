@@ -21,7 +21,7 @@ pub const ADJUSTMENT_KEYS: [&[u8; 4]; 16] =
     [b"levl", b"curv", b"hue2", b"brit", b"nvrt", b"thrs", b"post", b"expA", b"vibA", b"blnc", b"mixr", b"grdm", b"phfl", b"selc", b"blwh", b"clrL"];
 
 fn be16(d: &[u8], at: usize) -> Option<u16> {
-    d.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]))
+    d.get(at..at.checked_add(2)?).map(|b| u16::from_be_bytes([b[0], b[1]]))
 }
 fn bei16(d: &[u8], at: usize) -> Option<i16> {
     be16(d, at).map(|v| v as i16)
