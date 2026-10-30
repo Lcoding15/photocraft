@@ -47,9 +47,12 @@ pub(crate) fn import(file: &PsdFile, all: &[u8], doc: &mut Document, names: &[St
     let (w, hh) = (h.width as usize, h.height as usize);
     // Checked, as the flattened import's sizes are: on wasm32 `w * hh` need not fit a `usize`
     // (#8615).
-    // The decoded values of one plane must fit an allocation too: an 8-bit plane within the byte
-    // budget can still need four times as many bytes as `f32`s.
-    let fits = |n: usize| n.checked_mul(std::mem::size_of::<f32>()).is_some_and(|bytes| isize::try_from(bytes).is_ok());
+    // The decoded values of one plane keep to the decoder's byte budget too: an 8-bit plane within
+    // it can still need four times as many bytes as `f32`s.
+    let fits = |n: usize| {
+        n.checked_mul(std::mem::size_of::<f32>())
+            .is_some_and(|bytes| u64::try_from(bytes).is_ok_and(|b| b <= photocraft_psd::compression::MAX_DECODED_BYTES) && isize::try_from(bytes).is_ok())
+    };
     let (Some(n), Some(plane)) = (w.checked_mul(hh).filter(|n| fits(*n)), h.row_bytes().checked_mul(hh)) else {
         warnings.push("multichannel: the image is too large to read here".into());
         return;
