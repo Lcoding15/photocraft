@@ -664,6 +664,28 @@ fn a_mask_past_the_size_limits_is_an_error() {
     assert!(channel.is_some());
 }
 
+/// The layer record of a layer whose user mask is past the limits: the mask is left out (no
+/// `-2` channel) with a warning, and the vector mask's density and feather are still written,
+/// as the parameters-only mask record.
+#[test]
+fn a_layer_whose_mask_is_left_out_keeps_its_vector_mask_parameters() {
+    use photocraft_geom::Rect;
+    let doc = document(4, 4);
+    let mut ex = writer(&doc);
+    let mut l = Layer::raster("Masked", doc.pixel_format());
+    let mut m = photocraft_doc::LayerMask::hide_all();
+    m.surface.write_region(Rect::new(0, 0, 1, 1), &[1.0]);
+    m.surface.write_region(Rect::new(300_000, 0, 300_001, 1), &[1.0]);
+    l.mask = Some(m);
+    l.vector_mask = Some(photocraft_doc::VectorMask { path: Default::default(), enabled: true, linked: true, density: 0.5, feather: 3.0 });
+    let rec = ex.record(&l, Vec::new(), None);
+    assert!(ex.warnings.iter().any(|w| w.contains("\"Masked\"") && w.contains("layer mask could not be encoded")), "{:?}", ex.warnings);
+    assert!(rec.channels.iter().all(|c| c.id != -2), "no user mask channel");
+    let MaskData::Mask(written) = &rec.mask else { panic!("a parameters-only mask record: {:?}", rec.mask) };
+    let p = written.parameters.as_ref().expect("mask parameters");
+    assert!(p.vector_density.is_some() && p.vector_feather.is_some(), "{p:?}");
+}
+
 /// A linked smart object whose path names a FIFO is not read (#8601): opening a FIFO for
 /// reading blocks until a writer appears, and a device such as `/dev/zero` never ends, so the
 /// export would hang or run out of memory. The export finishes and writes the layer as pixels,
