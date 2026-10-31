@@ -629,6 +629,8 @@ mod window_geometry_tests {
         assert_eq!(opening_geometry(Some([100.0, 0.0, 1200.0, 800.0]), monitor).0, Some(egui::pos2(100.0, 0.0)), "the very top is fine");
     }
 
+    /// #10102: each frame keeps the open window's outer position and inner size for the next
+    /// opening, except while it is minimised, where the platform reports nothing worth keeping.
     #[test]
     fn the_open_window_s_geometry_is_kept_unless_minimised() {
         let ctx = egui::Context::default();
