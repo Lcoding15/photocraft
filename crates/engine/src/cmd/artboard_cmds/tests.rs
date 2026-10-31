@@ -45,6 +45,8 @@ fn new_artboards_place_and_grow_canvas() {
     assert_eq!(doc(&s).size.height, 80);
 }
 
+/// Artboards from layers and from a group, at every bit depth: each layer keeps its pixels, and
+/// the composed board clips what reaches past its edge.
 #[test]
 fn from_layers_and_group_then_compose_clips() {
     for depth in [8, 16, 32] {

@@ -490,10 +490,14 @@ pub(super) fn merge_visible_from(d: &Descriptor) -> Mapped {
     none(if get_bool(d, "Dplc") == Some(true) { "layer.stampVisible" } else { "layer.mergeVisible" })
 }
 
+/// `layer.mergeVisible` and `layer.stampVisible` as an .atn step: the same event, told apart by
+/// the `Dplc` ("duplicate") flag that leaves the merged layers in place.
 pub(super) fn merge_visible_to(id: &str, _: &Value) -> Option<Descriptor> {
     Some(if id == "layer.stampVisible" { desc("null").with("Dplc", D::Boolean(true)) } else { desc("null") })
 }
 
+/// An .atn Align step to `layer.align.*`: the direction from the `Usng` enum, and Photoshop's
+/// `alignToCanvas` flag as `"to": "artboard"`, which is what that flag means here (#10337).
 pub(super) fn align_from(d: &Descriptor) -> Mapped {
     match get_enum(d, "Usng").and_then(|u| lookup(ALIGN, &u)) {
         // Photoshop's one flag means "the board the layers sit on, else the canvas", which is
