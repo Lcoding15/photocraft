@@ -346,6 +346,9 @@ pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) {
     }
 }
 
+/// A pin's yellow disc.
+const PIN_FILL: Color32 = Color32::from_rgb(255, 214, 10);
+
 /// The warped pixels: image content, drawn under the grid and guides like the document so a
 /// guide stays visible across the layer being warped (#7781). The mesh lines and pins are [`draw`].
 pub fn draw_content(s: &PuppetSession, painter: &egui::Painter, xf: &ViewXform) {
@@ -364,8 +367,9 @@ pub fn draw_content(s: &PuppetSession, painter: &egui::Painter, xf: &ViewXform) 
     painter.add(mesh);
 }
 
-/// The mesh lines and pins over the warped pixels ([`draw_content`]) and the guides.
-pub fn draw(s: &PuppetSession, painter: &egui::Painter, xf: &ViewXform) {
+/// The mesh lines and pins over the warped pixels ([`draw_content`]) and the guides; the pins only
+/// with `pins` (View › Show › Edit Pins under View › Extras, #1119).
+pub fn draw(s: &PuppetSession, painter: &egui::Painter, xf: &ViewXform, pins: bool) {
     if s.show_mesh {
         let line = Stroke::new(0.6, Color32::from_rgba_unmultiplied(40, 40, 40, 150));
         let mut seen = std::collections::HashSet::new();
@@ -379,10 +383,13 @@ pub fn draw(s: &PuppetSession, painter: &egui::Painter, xf: &ViewXform) {
             }
         }
     }
+    if !pins {
+        return;
+    }
     // Pins: yellow discs with a black ring; the selected pin has a black centre (Photoshop).
     for (i, p) in s.warp.pins.iter().enumerate() {
         let c = xf.to_screen(p.dst[0] as f32, p.dst[1] as f32);
-        painter.circle_filled(c, 5.5, Color32::from_rgb(255, 214, 10));
+        painter.circle_filled(c, 5.5, PIN_FILL);
         painter.circle_stroke(c, 5.5, Stroke::new(1.25, Color32::BLACK));
         if s.selected == Some(i) {
             painter.circle_filled(c, 2.0, Color32::BLACK);
