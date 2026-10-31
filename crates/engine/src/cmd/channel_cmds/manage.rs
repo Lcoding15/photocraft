@@ -244,6 +244,9 @@ pub(super) fn move_channel(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "channel": to }))
 }
 
+/// `channel.setVisible`: show or hide the channel `"channel"` names (a colour channel, the
+/// composite, an alpha or spot channel, a mask), toggling it when `"visible"` is absent. The
+/// composite row turns every colour channel on or off at once, as the Channels panel does.
 pub(super) fn set_visible(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "channel.setVisible";
     let doc = &s.active().ok_or(EngineError::NoDocument)?.doc;
