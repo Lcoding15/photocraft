@@ -286,6 +286,20 @@ mod tests {
         s.execute("edit.clear", json!({"layer": shown})).unwrap();
     }
 
+    /// #10476 review: in Quick Mask mode Copy is let through, and what it copies has to be the
+    /// Quick Mask — a hidden layer's pixels must not reach the clipboard through it.
+    #[test]
+    fn copy_in_quick_mask_mode_copies_the_mask_and_not_the_hidden_layer() {
+        let (mut s, id) = session();
+        s.execute("edit.fill", json!({"color": [0.0, 1.0, 0.0]})).unwrap();
+        s.execute("layer.setProps", json!({"layer": id, "visible": false})).unwrap();
+        s.execute("select.rect", json!({"x": 0, "y": 0, "width": 32, "height": 32})).unwrap();
+        s.execute("select.editInQuickMaskMode", json!({"on": true})).unwrap();
+        s.execute("edit.copy", json!({})).unwrap();
+        let clip = s.clipboard.as_ref().expect("something was copied");
+        assert_eq!(clip.surface.format().mode, photocraft_color::ColorMode::Grayscale, "the Quick Mask copies as grayscale, not the layer's pixels");
+    }
+
     #[test]
     fn alpha_channels_of_a_hidden_layer_still_paint() {
         let (mut s, id) = session();
