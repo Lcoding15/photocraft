@@ -29,6 +29,8 @@ pub struct Cr2Spec {
 }
 
 impl Cr2Spec {
+    /// The CR2 file this spec describes, as bytes: a TIFF with the raw IFD, the sensor data in
+    /// the slice order the `CR2_SLICE` tag asks for, and whatever metadata the spec sets.
     pub fn build(&self) -> Vec<u8> {
         let (w, h) = (self.width, self.height);
         // Slice the sensor data into the JPEG sample order. A LONG tag the decoder accepts lays

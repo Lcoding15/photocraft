@@ -191,6 +191,9 @@ fn slice_layout(n: usize, w: usize, last: usize) -> Option<(usize, Vec<usize>)> 
     Some((width, ws))
 }
 
+/// Decode a Canon CR2 into its sensor data: the raw IFD's lossless-JPEG strip, laid out by the
+/// `CR2_SLICE` tag where the file carries a usable one, with the black levels and metadata the
+/// developer needs. Every size from the file is checked against `limits` first.
 pub(crate) fn decode(t: &Tiff, limits: &Limits) -> Result<Sensor> {
     let ifds = t.all_ifds();
     let ifd0 = t.ifd_at(t.first_ifd, 0).ok_or_else(|| RawError::malformed("CR2 has no IFD0"))?;

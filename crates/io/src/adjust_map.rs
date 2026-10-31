@@ -23,6 +23,7 @@ pub const ADJUSTMENT_KEYS: [&[u8; 4]; 16] =
 fn be16(d: &[u8], at: usize) -> Option<u16> {
     d.get(at..at.checked_add(2)?).map(|b| u16::from_be_bytes([b[0], b[1]]))
 }
+/// The signed 16-bit big-endian value at `at`, or `None` past the end of `d`.
 fn bei16(d: &[u8], at: usize) -> Option<i16> {
     be16(d, at).map(|v| v as i16)
 }
@@ -30,10 +31,14 @@ fn bef32(d: &[u8], at: usize) -> Option<f32> {
     d.get(at..at.checked_add(4)?).map(|b| f32::from_be_bytes([b[0], b[1], b[2], b[3]]))
 }
 
+/// An adjustment PhotoCraft has no model for, kept verbatim so a save writes it back unchanged.
 fn unsupported(key: &[u8; 4], data: &[u8]) -> Adjustment {
     Adjustment::Unsupported { psd_key: String::from_utf8_lossy(key).into_owned(), raw: data.into() }
 }
 
+/// One Levels record at byte `at`: the five 16-bit big-endian values of a channel (input black
+/// and white, output black and white, gamma). `None` where the block ends before the record,
+/// which a truncated or hostile `levl` can do (#8615).
 fn levels_rec(d: &[u8], at: usize) -> Option<LevelsChannel> {
     let at = |off: usize| -> Option<usize> { at.checked_add(off) };
     Some(LevelsChannel {
@@ -215,6 +220,9 @@ pub fn parse(key: &[u8; 4], data: &[u8], cged: Option<&[u8]>, channels: Channels
     a
 }
 
+/// A PSD adjustment block as an [`Adjustment`]: `key` says which kind, `data` is the block and
+/// `cged` its modern descriptor where Photoshop wrote one. Anything this reader cannot model, or
+/// whose block is too short for what it claims, falls back to [`unsupported`] and is kept raw.
 fn parse_any(key: &[u8; 4], data: &[u8], cged: Option<&[u8]>) -> Adjustment {
     let parsed = match key {
         b"nvrt" => Some(Adjustment::Invert),
