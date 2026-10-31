@@ -62,10 +62,22 @@ fn gated(id: &str, has_selection: bool) -> bool {
     GATED.contains(&id) || is_filter(id) || (has_selection && GATED_WITH_SELECTION.contains(&id))
 }
 
-/// The render filters paint through `render_cmds::draw`, and Liquify and Lens Correction take
-/// their layer from `"layer"` or the active one: all of them ignore the channel target, so a
-/// target in their params says nothing about what they touch (#10476 review).
-const IGNORES_TARGET: &[&str] = &["filter.render.flame", "filter.render.tree", "filter.render.pictureFrame", "filter.liquify", "filter.lensCorrection"];
+/// The filters that edit the layer whatever is targeted, so a channel target in their params
+/// says nothing about what they touch (#10476 review): the render filters paint through
+/// `render_cmds::draw`, and Liquify, the lens filters, Camera Raw and Vanishing Point take their
+/// layer from `"layer"` or the active one (`lens_cmds::run_filter`, `vp_cmds`). They are the same
+/// commands `channel_cmds::follows_filter_mask` excludes, for the same reason; keep the two lists
+/// in step.
+const IGNORES_TARGET: &[&str] = &[
+    "filter.render.flame",
+    "filter.render.tree",
+    "filter.render.pictureFrame",
+    "filter.liquify",
+    "filter.lensCorrection",
+    "filter.adaptiveWideAngle",
+    "filter.cameraRaw",
+    "filter.vanishingPoint",
+];
 
 /// Does command `id` act on the channel target in its params? Only then does such a target mean
 /// no layer is touched, and only then may it lift the refusal. A command that ignores the target
@@ -256,6 +268,11 @@ mod tests {
             assert!(e.contains(HIDDEN), "{cmd} {p}: {e}");
         }
         assert_eq!(s.active().unwrap().history.entries().len(), steps, "the hidden layer is untouched");
+        // The same for the filters that take a layer and never a channel, whose params are too
+        // particular to build here: Adaptive Wide Angle, Camera Raw and Vanishing Point.
+        for cmd in ["filter.adaptiveWideAngle", "filter.cameraRaw", "filter.vanishingPoint"] {
+            assert_eq!(super::refusal(&s, cmd, &json!({"target": {"channel": 0}})), Some(HIDDEN), "{cmd}");
+        }
         // Clear and Copy do act on the targeted channel, so they go through.
         s.execute("edit.clear", json!({})).unwrap();
         s.execute("edit.copy", json!({})).unwrap();
