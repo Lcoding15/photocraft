@@ -206,15 +206,22 @@ fn opening_id() -> egui::Id {
     egui::Id::unique("camera-raw-window-opening")
 }
 
+/// How much of the window has to be on the monitor for the saved position to be used: enough to
+/// grab and move it, not the whole window (one deliberately half off-screen keeps its place).
+const MIN_ON_SCREEN: f32 = 120.0;
+
 /// The opening geometry from what was saved: the size, at least [`MIN_SIZE`]; the position only
-/// where it is on the main window's monitor (a monitor since unplugged would leave the window
-/// out of sight). A missing or corrupt value opens at [`DEFAULT_SIZE`] where the platform puts it.
+/// where enough of the window would be on the main window's monitor (a monitor since unplugged, or
+/// a window saved against the far edge, would leave it out of reach — #10102 review). A missing or
+/// corrupt value opens at [`DEFAULT_SIZE`] where the platform puts it.
 fn opening_geometry(saved: Option<[f32; 4]>, monitor: Option<egui::Vec2>) -> WindowGeometry {
     let Some([x, y, w, h]) = saved.filter(|v| v.iter().all(|c| c.is_finite() && c.abs() <= MAX_COORD)) else {
         return (None, DEFAULT_SIZE.into());
     };
     let size = egui::vec2(w.clamp(MIN_SIZE[0], MAX_COORD), h.clamp(MIN_SIZE[1], MAX_COORD));
-    let on_screen = monitor.is_some_and(|m| (0.0..m.x).contains(&x) && (0.0..m.y).contains(&y));
+    // The visible strip of the window on each axis, with the size it will actually open at.
+    let shown = |pos: f32, extent: f32, screen: f32| (pos + extent).min(screen) - pos.max(0.0);
+    let on_screen = monitor.is_some_and(|m| shown(x, size.x, m.x) >= MIN_ON_SCREEN.min(size.x) && shown(y, size.y, m.y) >= MIN_ON_SCREEN.min(size.y));
     (on_screen.then(|| egui::pos2(x, y)), size)
 }
 
@@ -597,11 +604,19 @@ mod window_geometry_tests {
         assert_eq!(opening_geometry(Some([100.0, 50.0, 1000.0, 700.0]), monitor), (Some(egui::pos2(100.0, 50.0)), egui::vec2(1000.0, 700.0)));
         assert_eq!(opening_geometry(Some([100.0, 50.0, 300.0, 200.0]), monitor).1, egui::vec2(900.0, 600.0), "never under the minimum");
         assert_eq!(opening_geometry(Some([2500.0, 50.0, 1000.0, 700.0]), monitor), (None, egui::vec2(1000.0, 700.0)), "off the monitor: size only");
-        assert_eq!(opening_geometry(Some([-400.0, 50.0, 1000.0, 700.0]), monitor).0, None, "left of it too");
+        assert_eq!(opening_geometry(Some([-1000.0, 50.0, 1000.0, 700.0]), monitor).0, None, "left of it too");
         assert_eq!(opening_geometry(Some([100.0, 50.0, 1000.0, 700.0]), None).0, None, "no monitor known: size only");
         for bad in [[f32::NAN, 0.0, 1000.0, 700.0], [0.0, 0.0, f32::INFINITY, 700.0], [0.0, 0.0, 1.0e9, 700.0]] {
             assert_eq!(opening_geometry(Some(bad), monitor), (None, egui::vec2(1360.0, 900.0)), "corrupt {bad:?}: the default");
         }
+        // Review on #10400: a position on the monitor by its corner alone is out of reach — the
+        // window that would open there is dropped back to the platform's own placement.
+        assert_eq!(opening_geometry(Some([1910.0, 1070.0, 1200.0, 800.0]), monitor).0, None, "a sliver at the bottom right");
+        assert_eq!(opening_geometry(Some([-1150.0, 50.0, 1200.0, 800.0]), monitor).0, None, "and at the left edge");
+        assert_eq!(opening_geometry(Some([50.0, -760.0, 1200.0, 800.0]), monitor).0, None, "and at the top");
+        // Enough of it to grab: kept, however far over the edge the rest hangs.
+        assert_eq!(opening_geometry(Some([1700.0, 900.0, 1200.0, 800.0]), monitor).0, Some(egui::pos2(1700.0, 900.0)));
+        assert_eq!(opening_geometry(Some([-1000.0, -600.0, 1200.0, 800.0]), monitor).0, Some(egui::pos2(-1000.0, -600.0)));
     }
 
     #[test]
