@@ -75,24 +75,21 @@ fn uses_channel_target(id: &str) -> bool {
     crate::channel_cmds::routed(id) && !IGNORES_TARGET.contains(&id)
 }
 
-/// Cut, Copy and Clear read the layer they act on from the session (the active layer), never from
-/// a `"layer"` param, so a visible layer named there must not clear the refusal (#10476 review).
-const IGNORES_LAYER: &[&str] = &["edit.cut", "edit.copy", "edit.clear"];
+/// Does command `id` act on a channel rather than the layer? Cut copies the channel it is given
+/// but always clears the layer's own pixels (`edit_cmds`), so no target lets it through; the rest
+/// follow the target in their params, the Channels panel's having been filled in already.
+fn acts_on_channel(id: &str, params: &Value) -> bool {
+    id != "edit.cut" && uses_channel_target(id) && crate::channel_cmds::is_channel_target(params)
+}
 
-/// Does command `id` act on a channel rather than the layer, resolved the way the command itself
-/// resolves it? The routed commands read their params; Copy and Clear read the Channels panel
-/// (`channel_clip::copy`, `clear_channel`) and so cannot be let off by a `"target"` param, while
-/// Cut always clears the layer's pixels (#10476 review).
-fn acts_on_channel(s: &Session, id: &str, params: &Value) -> bool {
-    use crate::channel_cmds::Target;
-    match id {
-        "edit.cut" => false,
-        // Clear fills the targeted alpha channel, or the Quick Mask in Quick Mask mode.
-        "edit.clear" => crate::channel_cmds::panel_target(s).is_some(),
-        // Copy copies a targeted alpha channel; it has no Quick Mask case and copies the layer.
-        "edit.copy" => matches!(crate::channel_cmds::panel_target(s), Some(Target::Alpha(_))),
-        _ => uses_channel_target(id) && crate::channel_cmds::is_channel_target(params),
+/// The layer command `id` acts on, resolved the way the command resolves it. Cut and Copy read a
+/// `"layer"` param only when they work on colour channels; their composite path takes the active
+/// layer, so a visible layer named there must not clear the refusal (#10476 review).
+fn layer_of(s: &Session, id: &str, params: &Value) -> Option<LayerId> {
+    if matches!(id, "edit.cut" | "edit.copy") && crate::color_channels::clip_colors(s, params).ok().flatten().is_none() {
+        return s.active()?.active_layer;
     }
+    crate::commands::layer_param(s, params).ok()
 }
 
 /// Is the layer shown: it and every group around it visible.
@@ -108,11 +105,10 @@ pub fn refusal(s: &Session, id: &str, params: &Value) -> Option<&'static str> {
         return None;
     }
     let params = crate::channel_cmds::inject_target(s, id, params.clone());
-    if acts_on_channel(s, id, &params) {
+    if acts_on_channel(id, &params) {
         return None;
     }
-    // Cut, Copy and Clear act on the active layer, never on a `"layer"` param (#10476 review).
-    let layer = if IGNORES_LAYER.contains(&id) { st.active_layer? } else { crate::commands::layer_param(s, &params).ok()? };
+    let layer = layer_of(s, id, &params)?;
     (st.doc.layer(layer).is_some() && !shown(&st.doc, layer)).then_some(HIDDEN)
 }
 
@@ -233,19 +229,17 @@ mod tests {
         s.execute("edit.fill", json!({"color": [1.0, 0.0, 0.0], "target": {"channel": 0}})).unwrap();
     }
 
-    /// #10476 review: the exemption has to follow what a command really acts on. Clear and Copy
-    /// read the Channels panel, so a channel targeted there lets them through, while a `"target"`
-    /// param they never read does not; Cut, Liquify and Lens Correction act on the layer whatever
-    /// is targeted; and a visible `"layer"` param cannot stand in for the layer Cut, Copy and
-    /// Clear really use (the active one).
+    /// #10476 review: the exemption follows the target and the layer each command really uses.
+    /// Liquify and Lens Correction take their layer from the params and never a channel; Cut cuts
+    /// the layer's pixels whatever is targeted; an explicit mask target beats the Channels panel
+    /// for Copy; and Clear does read a `"layer"` param, so a hidden layer named there is refused
+    /// even from a visible active layer.
     #[test]
     fn the_exemption_follows_the_target_and_layer_each_command_really_uses() {
         let (mut s, hidden) = session();
-        let shown = s.execute("layer.new.layer", json!({})).unwrap()["layer"].as_u64().unwrap();
         s.execute("channel.new", json!({})).unwrap();
-        // A new channel is the targeted one: back to the composite, so the panel targets no channel.
-        s.execute("channel.target", json!({"channel": "composite"})).unwrap();
         s.execute("layer.select", json!({"layer": hidden})).unwrap();
+        s.execute("layer.layerMask.revealAll", json!({})).unwrap();
         s.execute("layer.setProps", json!({"layer": hidden, "visible": false})).unwrap();
         s.execute("select.all", json!({})).unwrap();
         let steps = s.active().unwrap().history.entries().len();
@@ -253,22 +247,26 @@ mod tests {
             // Liquify and Lens Correction take their layer from the params, never the channel.
             ("filter.liquify", json!({"target": {"channel": 0}, "strokes": []})),
             ("filter.lensCorrection", json!({"target": {"channel": 0}, "scale": 1.0})),
-            // Copy reads the Channels panel, which targets the composite here, not this param.
-            ("edit.copy", json!({"target": {"channel": 0}})),
-            ("edit.copy", json!({"target": "quickMask"})),
-            // A visible layer in the params is not the layer Cut, Copy and Clear act on.
-            ("edit.cut", json!({"layer": shown})),
-            ("edit.copy", json!({"layer": shown})),
-            ("edit.clear", json!({"layer": shown})),
+            // Cut copies the channel it is given but clears the layer's own pixels.
+            ("edit.cut", json!({"target": {"channel": 0}})),
+            // A mask target wins over the targeted alpha channel: Copy copies the layer's mask.
+            ("edit.copy", json!({"target": "mask"})),
         ] {
             let e = s.execute(cmd, p.clone()).unwrap_err().to_string();
             assert!(e.contains(HIDDEN), "{cmd} {p}: {e}");
         }
         assert_eq!(s.active().unwrap().history.entries().len(), steps, "the hidden layer is untouched");
-        // Clear and Copy fill and copy the channel the panel targets, not the hidden layer.
-        s.execute("channel.target", json!({"channel": 0})).unwrap();
+        // Clear and Copy do act on the targeted channel, so they go through.
         s.execute("edit.clear", json!({})).unwrap();
         s.execute("edit.copy", json!({})).unwrap();
+        // Clear takes a `"layer"` param, so the hidden layer named there is refused even while a
+        // visible layer is active and the composite is targeted.
+        let shown = s.execute("layer.new.layer", json!({})).unwrap()["layer"].as_u64().unwrap();
+        s.execute("channel.target", json!({"channel": "composite"})).unwrap();
+        s.execute("layer.select", json!({"layer": shown})).unwrap();
+        let e = s.execute("edit.clear", json!({"layer": hidden})).unwrap_err().to_string();
+        assert!(e.contains(HIDDEN), "a hidden layer named in the params: {e}");
+        s.execute("edit.clear", json!({"layer": shown})).unwrap();
     }
 
     #[test]
