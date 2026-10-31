@@ -62,16 +62,37 @@ fn gated(id: &str, has_selection: bool) -> bool {
     GATED.contains(&id) || is_filter(id) || (has_selection && GATED_WITH_SELECTION.contains(&id))
 }
 
-/// The render filters paint through `render_cmds::draw`, which takes the layer and never the
-/// channel target, so a target in their params says nothing about what they touch (#10476 review).
-const IGNORES_TARGET: &[&str] = &["filter.render.flame", "filter.render.tree", "filter.render.pictureFrame"];
+/// The render filters paint through `render_cmds::draw`, and Liquify and Lens Correction take
+/// their layer from `"layer"` or the active one: all of them ignore the channel target, so a
+/// target in their params says nothing about what they touch (#10476 review).
+const IGNORES_TARGET: &[&str] = &["filter.render.flame", "filter.render.tree", "filter.render.pictureFrame", "filter.liquify", "filter.lensCorrection"];
 
-/// Does command `id` act on a channel target when it is given one? Only then does such a target
-/// mean no layer is touched, and only then may it lift the refusal. A command that ignores the
-/// target (a render filter, or anything outside the routed set, like Cut and Clear) edits the
-/// layer whatever the params say.
+/// Does command `id` act on the channel target in its params? Only then does such a target mean
+/// no layer is touched, and only then may it lift the refusal. A command that ignores the target
+/// (a render filter, Liquify, or anything outside the routed set, like Cut) edits the layer
+/// whatever the params say.
 fn uses_channel_target(id: &str) -> bool {
     crate::channel_cmds::routed(id) && !IGNORES_TARGET.contains(&id)
+}
+
+/// Cut, Copy and Clear read the layer they act on from the session (the active layer), never from
+/// a `"layer"` param, so a visible layer named there must not clear the refusal (#10476 review).
+const IGNORES_LAYER: &[&str] = &["edit.cut", "edit.copy", "edit.clear"];
+
+/// Does command `id` act on a channel rather than the layer, resolved the way the command itself
+/// resolves it? The routed commands read their params; Copy and Clear read the Channels panel
+/// (`channel_clip::copy`, `clear_channel`) and so cannot be let off by a `"target"` param, while
+/// Cut always clears the layer's pixels (#10476 review).
+fn acts_on_channel(s: &Session, id: &str, params: &Value) -> bool {
+    use crate::channel_cmds::Target;
+    match id {
+        "edit.cut" => false,
+        // Clear fills the targeted alpha channel, or the Quick Mask in Quick Mask mode.
+        "edit.clear" => crate::channel_cmds::panel_target(s).is_some(),
+        // Copy copies a targeted alpha channel; it has no Quick Mask case and copies the layer.
+        "edit.copy" => matches!(crate::channel_cmds::panel_target(s), Some(Target::Alpha(_))),
+        _ => uses_channel_target(id) && crate::channel_cmds::is_channel_target(params),
+    }
 }
 
 /// Is the layer shown: it and every group around it visible.
@@ -87,10 +108,11 @@ pub fn refusal(s: &Session, id: &str, params: &Value) -> Option<&'static str> {
         return None;
     }
     let params = crate::channel_cmds::inject_target(s, id, params.clone());
-    if uses_channel_target(id) && crate::channel_cmds::is_channel_target(&params) {
+    if acts_on_channel(s, id, &params) {
         return None;
     }
-    let layer = params.get("layer").and_then(Value::as_u64).map(LayerId).or(st.active_layer)?;
+    let named = params.get("layer").and_then(Value::as_u64).map(LayerId).filter(|_| !IGNORES_LAYER.contains(&id));
+    let layer = named.or(st.active_layer)?;
     (st.doc.layer(layer).is_some() && !shown(&st.doc, layer)).then_some(HIDDEN)
 }
 
@@ -184,8 +206,8 @@ mod tests {
     }
 
     /// Review on #10495: a channel target lifts the refusal only for the commands that act on it.
-    /// A render filter paints the layer whatever the target says, and Cut and Clear never read one
-    /// — a target in their params must not wave the refusal through.
+    /// A render filter paints the layer whatever the target says, and Cut never reads one — a
+    /// target in its params must not wave the refusal through.
     #[test]
     fn a_channel_target_a_command_ignores_does_not_lift_the_refusal() {
         let (mut s, id) = session();
@@ -199,9 +221,8 @@ mod tests {
             // The render filters take the layer, never the channel.
             ("filter.render.tree", json!({"target": {"channel": 0}, "baseTreeType": 7})),
             ("filter.render.flame", json!({"target": {"channel": 0}})),
-            // Cut and Clear read no target at all.
+            // Cut reads no target at all: it always clears the layer's pixels.
             ("edit.cut", json!({"target": "quickMask"})),
-            ("edit.clear", json!({"target": {"channel": 0}})),
         ] {
             let e = s.execute(cmd, p).unwrap_err().to_string();
             assert!(e.contains(HIDDEN), "{cmd}: {e}");
@@ -210,6 +231,44 @@ mod tests {
         // The commands that do act on the channel still go through.
         s.execute("paint.stroke", json!({"points": [[10, 10], [20, 20]], "target": {"channel": 0}})).unwrap();
         s.execute("edit.fill", json!({"color": [1.0, 0.0, 0.0], "target": {"channel": 0}})).unwrap();
+    }
+
+    /// #10476 review: the exemption has to follow what a command really acts on. Clear and Copy
+    /// read the Channels panel, so a channel targeted there lets them through, while a `"target"`
+    /// param they never read does not; Cut, Liquify and Lens Correction act on the layer whatever
+    /// is targeted; and a visible `"layer"` param cannot stand in for the layer Cut, Copy and
+    /// Clear really use (the active one).
+    #[test]
+    fn the_exemption_follows_the_target_and_layer_each_command_really_uses() {
+        let (mut s, hidden) = session();
+        let shown = s.execute("layer.new.layer", json!({})).unwrap()["layer"].as_u64().unwrap();
+        s.execute("channel.new", json!({})).unwrap();
+        // A new channel is the targeted one: back to the composite, so the panel targets no channel.
+        s.execute("channel.target", json!({"channel": "composite"})).unwrap();
+        s.execute("layer.select", json!({"layer": hidden})).unwrap();
+        s.execute("layer.setProps", json!({"layer": hidden, "visible": false})).unwrap();
+        s.execute("select.all", json!({})).unwrap();
+        let steps = s.active().unwrap().history.entries().len();
+        for (cmd, p) in [
+            // Liquify and Lens Correction take their layer from the params, never the channel.
+            ("filter.liquify", json!({"target": {"channel": 0}, "strokes": []})),
+            ("filter.lensCorrection", json!({"target": {"channel": 0}, "scale": 1.0})),
+            // Copy reads the Channels panel, which targets the composite here, not this param.
+            ("edit.copy", json!({"target": {"channel": 0}})),
+            ("edit.copy", json!({"target": "quickMask"})),
+            // A visible layer in the params is not the layer Cut, Copy and Clear act on.
+            ("edit.cut", json!({"layer": shown})),
+            ("edit.copy", json!({"layer": shown})),
+            ("edit.clear", json!({"layer": shown})),
+        ] {
+            let e = s.execute(cmd, p.clone()).unwrap_err().to_string();
+            assert!(e.contains(HIDDEN), "{cmd} {p}: {e}");
+        }
+        assert_eq!(s.active().unwrap().history.entries().len(), steps, "the hidden layer is untouched");
+        // Clear and Copy fill and copy the channel the panel targets, not the hidden layer.
+        s.execute("channel.target", json!({"channel": 0})).unwrap();
+        s.execute("edit.clear", json!({})).unwrap();
+        s.execute("edit.copy", json!({})).unwrap();
     }
 
     #[test]
