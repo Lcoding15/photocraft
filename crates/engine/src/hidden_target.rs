@@ -1,7 +1,9 @@
 //! Photoshop refuses to paint on or move a hidden layer (#571): the painting and retouching
 //! tools, the Paint Bucket, the Gradient and the Move tool stop with "the target layer is hidden"
-//! instead of changing pixels nobody can see. A layer inside a hidden group is hidden too. An
-//! alpha channel or Quick Mask target has no layer, so it is never refused.
+//! instead of changing pixels nobody can see. Filters are refused too (Photoshop greys the Filter
+//! menu out), and so are Cut, Copy, Clear and Fill while there is a selection (#10476); without
+//! one, Fill fills the whole hidden layer, as Photoshop does. A layer inside a hidden group is
+//! hidden too. An alpha channel or Quick Mask target has no layer, so it is never refused.
 
 use photocraft_doc::{Document, LayerId};
 use serde_json::Value;
@@ -36,6 +38,30 @@ const GATED: &[&str] = &[
     "layer.translate",
 ];
 
+/// Commands refused on a hidden layer only while there is a selection (#10476).
+const GATED_WITH_SELECTION: &[&str] = &[
+    "edit.cut",
+    "edit.copy",
+    "edit.clear",
+    "edit.fill",
+    "edit.fillForeground",
+    "edit.fillBackground",
+    "edit.fillForegroundPreserve",
+    "edit.fillBackgroundPreserve",
+    "edit.fillHistory",
+];
+
+/// Does command `id` change the target layer's pixels through a filter. Convert for Smart Filters
+/// only wraps the layer, so it is not one.
+fn is_filter(id: &str) -> bool {
+    id.starts_with("filter.") && id != "filter.convertForSmartFilters"
+}
+
+/// Is command `id` refused on a hidden layer, given whether the document has a selection.
+fn gated(id: &str, has_selection: bool) -> bool {
+    GATED.contains(&id) || is_filter(id) || (has_selection && GATED_WITH_SELECTION.contains(&id))
+}
+
 /// Is the layer shown: it and every group around it visible.
 fn shown(doc: &Document, id: LayerId) -> bool {
     doc.path_of(id).is_some_and(|path| (1..=path.len()).all(|n| path.get(..n).and_then(|p| doc.layer_at(p)).is_some_and(|l| l.visible)))
@@ -44,16 +70,22 @@ fn shown(doc: &Document, id: LayerId) -> bool {
 /// Why command `id` with `params` must not run: its target layer is hidden. `None` for other
 /// commands, channel targets, and visible layers.
 pub fn refusal(s: &Session, id: &str, params: &Value) -> Option<&'static str> {
-    if !GATED.contains(&id) {
+    let st = s.active()?;
+    if !gated(id, st.doc.selection.is_some()) {
         return None;
     }
     let params = crate::channel_cmds::inject_target(s, id, params.clone());
     if crate::channel_cmds::is_channel_target(&params) {
         return None;
     }
-    let st = s.active()?;
     let layer = params.get("layer").and_then(Value::as_u64).map(LayerId).or(st.active_layer)?;
     (st.doc.layer(layer).is_some() && !shown(&st.doc, layer)).then_some(HIDDEN)
+}
+
+/// [`refusal`] for menu enablement: Photoshop greys a filter out on a hidden layer, while the
+/// other gated commands stay enabled and are refused when they run.
+pub fn menu_refusal(s: &Session, id: &str, params: &Value) -> Option<&'static str> {
+    if is_filter(id) { refusal(s, id, params) } else { None }
 }
 
 #[cfg(test)]
@@ -93,6 +125,39 @@ mod tests {
         s.execute("layer.setProps", json!({"layer": id, "visible": true})).unwrap();
         s.execute("paint.stroke", json!({"points": [[10, 10], [12, 12]], "color": "#ff0000", "size": 9})).unwrap();
         assert_ne!(pixel(&mut s), json!([1.0, 1.0, 1.0, 1.0]));
+    }
+
+    /// #10476: filters are refused and greyed out on a hidden layer; Cut, Copy, Clear and Fill are
+    /// refused while there is a selection, and Fill without one fills the whole hidden layer.
+    #[test]
+    fn filters_and_selection_edits_on_a_hidden_layer_are_refused() {
+        let (mut s, id) = session();
+        s.execute("edit.fill", json!({"color": [0.0, 1.0, 0.0]})).unwrap();
+        s.execute("layer.setProps", json!({"layer": id, "visible": false})).unwrap();
+        s.execute("select.all", json!({})).unwrap();
+        let steps = s.active().unwrap().history.entries().len();
+        for (cmd, p) in [
+            ("filter.blur.gaussianBlur", json!({"radius": 2})),
+            ("filter.other.minimum", json!({"radius": 1})),
+            ("edit.cut", json!({})),
+            ("edit.copy", json!({})),
+            ("edit.clear", json!({})),
+            ("edit.fill", json!({"color": [1.0, 0.0, 0.0]})),
+            ("edit.fillForeground", json!({})),
+        ] {
+            let e = s.execute(cmd, p).unwrap_err().to_string();
+            assert!(e.contains(HIDDEN), "{cmd}: {e}");
+        }
+        assert_eq!(s.active().unwrap().history.entries().len(), steps, "nothing changed");
+        assert!(!s.is_enabled("filter.blur.gaussianBlur"), "the filter is greyed out");
+        assert!(s.is_enabled("filter.convertForSmartFilters"), "converting only wraps the layer");
+        assert!(s.is_enabled("edit.fill"), "Fill stays in the menu and is refused when it runs");
+        // Without a selection Fill fills the whole hidden layer, as in Photoshop; filters stay refused.
+        s.execute("select.deselect", json!({})).unwrap();
+        s.execute("edit.fill", json!({"color": [1.0, 0.0, 0.0]})).unwrap();
+        s.execute("layer.setProps", json!({"layer": id, "visible": true})).unwrap();
+        assert_eq!(pixel(&mut s), json!([1.0, 0.0, 0.0, 1.0]));
+        assert!(s.is_enabled("filter.blur.gaussianBlur"), "shown again, it filters");
     }
 
     #[test]
