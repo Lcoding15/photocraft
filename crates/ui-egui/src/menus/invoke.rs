@@ -182,6 +182,9 @@ fn invoke_shell_commands(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str,
     None
 }
 
+/// The commands the shell takes over because they start something in the UI rather than only in
+/// the engine: a path to a selection, in-place renaming, the file dialogs. `Ok(None)` leaves the
+/// command to the next group.
 fn invoke_file_commands(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Result<Option<Value>, String> {
     let result = match id {
         // ⌘↩ / Ctrl+Enter (#306): load the path selected in the Paths panel (or the one being
@@ -295,6 +298,10 @@ fn invoke_file_commands(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, 
     result.map(Some)
 }
 
+/// Run command `id` from the shell, past the guards `invoke` applies: each group of commands the
+/// UI handles itself gets a look first (the early and shell commands, the file and window ones),
+/// then the cases that open a dialog or follow the command up in the UI, and anything left goes
+/// straight to the engine.
 pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: Value) -> Result<Value, String> {
     if let Some(result) = invoke_early_commands(app, ctx, id, &params) {
         return result;
