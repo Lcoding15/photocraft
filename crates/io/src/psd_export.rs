@@ -205,6 +205,9 @@ impl Ex {
         (-1..self.cc as i16).map(|id| self.encode(id, &[], 0, 0).unwrap_or_else(|_| ChannelData::new(id, Some(Compression::Raw), Vec::new()))).collect()
     }
 
+    /// A layer's pixels as PSD channels: the rect its content spans, one encoded plane per
+    /// channel, and the warnings to show the user (a rect past what a PSD layer may span, or a
+    /// plane that would not encode, writes an empty layer and says why — #8612).
     fn pixel_channels(&self, s: &Surface, name: &str) -> (PsdRect, Vec<ChannelData>, Vec<String>) {
         let mut warnings = Vec::new();
         let s = if s.format() != self.fmt {
@@ -257,6 +260,9 @@ impl Ex {
         }
     }
 
+    /// A layer mask as PSD writes it: its rect and the encoded plane, or the vector mask's
+    /// density and feather where it has one. An error when the plane will not encode, so the
+    /// caller can say so instead of writing a mask that reopens empty (#8612).
     fn mask(&self, m: &LayerMask, vector: Option<(f32, f32)>) -> Result<(MaskData, Option<ChannelData>), String> {
         let s = if m.surface.format() != self.mask_fmt { m.surface.convert(self.mask_fmt) } else { m.surface.clone() };
         let default = s.default_pixel().first().copied().unwrap_or(0.0);
