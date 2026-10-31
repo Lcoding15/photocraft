@@ -62,6 +62,18 @@ fn gated(id: &str, has_selection: bool) -> bool {
     GATED.contains(&id) || is_filter(id) || (has_selection && GATED_WITH_SELECTION.contains(&id))
 }
 
+/// The render filters paint through `render_cmds::draw`, which takes the layer and never the
+/// channel target, so a target in their params says nothing about what they touch (#10476 review).
+const IGNORES_TARGET: &[&str] = &["filter.render.flame", "filter.render.tree", "filter.render.pictureFrame"];
+
+/// Does command `id` act on a channel target when it is given one? Only then does such a target
+/// mean no layer is touched, and only then may it lift the refusal. A command that ignores the
+/// target (a render filter, or anything outside the routed set, like Cut and Clear) edits the
+/// layer whatever the params say.
+fn uses_channel_target(id: &str) -> bool {
+    crate::channel_cmds::routed(id) && !IGNORES_TARGET.contains(&id)
+}
+
 /// Is the layer shown: it and every group around it visible.
 fn shown(doc: &Document, id: LayerId) -> bool {
     doc.path_of(id).is_some_and(|path| (1..=path.len()).all(|n| path.get(..n).and_then(|p| doc.layer_at(p)).is_some_and(|l| l.visible)))
@@ -75,7 +87,7 @@ pub fn refusal(s: &Session, id: &str, params: &Value) -> Option<&'static str> {
         return None;
     }
     let params = crate::channel_cmds::inject_target(s, id, params.clone());
-    if crate::channel_cmds::is_channel_target(&params) {
+    if uses_channel_target(id) && crate::channel_cmds::is_channel_target(&params) {
         return None;
     }
     let layer = params.get("layer").and_then(Value::as_u64).map(LayerId).or(st.active_layer)?;
@@ -169,6 +181,35 @@ mod tests {
         s.execute("layer.setProps", json!({"layer": g, "visible": false})).unwrap();
         s.execute("layer.select", json!({"layer": id})).unwrap();
         assert!(s.execute("paint.stroke", json!({"points": [[10, 10]]})).unwrap_err().to_string().contains(HIDDEN));
+    }
+
+    /// Review on #10495: a channel target lifts the refusal only for the commands that act on it.
+    /// A render filter paints the layer whatever the target says, and Cut and Clear never read one
+    /// — a target in their params must not wave the refusal through.
+    #[test]
+    fn a_channel_target_a_command_ignores_does_not_lift_the_refusal() {
+        let (mut s, id) = session();
+        s.execute("edit.fill", json!({"color": [0.0, 1.0, 0.0]})).unwrap();
+        s.execute("channel.new", json!({})).unwrap();
+        s.execute("layer.select", json!({"layer": id})).unwrap();
+        s.execute("layer.setProps", json!({"layer": id, "visible": false})).unwrap();
+        s.execute("select.all", json!({})).unwrap();
+        let steps = s.active().unwrap().history.entries().len();
+        for (cmd, p) in [
+            // The render filters take the layer, never the channel.
+            ("filter.render.tree", json!({"target": {"channel": 0}, "baseTreeType": 7})),
+            ("filter.render.flame", json!({"target": {"channel": 0}})),
+            // Cut and Clear read no target at all.
+            ("edit.cut", json!({"target": "quickMask"})),
+            ("edit.clear", json!({"target": {"channel": 0}})),
+        ] {
+            let e = s.execute(cmd, p).unwrap_err().to_string();
+            assert!(e.contains(HIDDEN), "{cmd}: {e}");
+        }
+        assert_eq!(s.active().unwrap().history.entries().len(), steps, "the hidden layer is untouched");
+        // The commands that do act on the channel still go through.
+        s.execute("paint.stroke", json!({"points": [[10, 10], [20, 20]], "target": {"channel": 0}})).unwrap();
+        s.execute("edit.fill", json!({"color": [1.0, 0.0, 0.0], "target": {"channel": 0}})).unwrap();
     }
 
     #[test]
