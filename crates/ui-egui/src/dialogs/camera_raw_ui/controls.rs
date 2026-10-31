@@ -219,9 +219,14 @@ fn opening_geometry(saved: Option<[f32; 4]>, monitor: Option<egui::Vec2>) -> Win
         return (None, DEFAULT_SIZE.into());
     };
     let size = egui::vec2(w.clamp(MIN_SIZE[0], MAX_COORD), h.clamp(MIN_SIZE[1], MAX_COORD));
-    // The visible strip of the window on each axis, with the size it will actually open at.
+    // The visible strip of the window across the screen, with the size it will actually open at.
     let shown = |pos: f32, extent: f32, screen: f32| (pos + extent).min(screen) - pos.max(0.0);
-    let on_screen = monitor.is_some_and(|m| shown(x, size.x, m.x) >= MIN_ON_SCREEN.min(size.x) && shown(y, size.y, m.y) >= MIN_ON_SCREEN.min(size.y));
+    let on_screen = monitor.is_some_and(|m| {
+        // The title bar sits at the top, so a window reaching above the monitor cannot be dragged
+        // back: that edge has to be on it, with room below to take hold of (#10400 review). Left
+        // and right may hang over, as long as enough of the window is still there.
+        (0.0..=(m.y - MIN_ON_SCREEN.min(size.y))).contains(&y) && shown(x, size.x, m.x) >= MIN_ON_SCREEN.min(size.x)
+    });
     (on_screen.then(|| egui::pos2(x, y)), size)
 }
 
@@ -614,9 +619,14 @@ mod window_geometry_tests {
         assert_eq!(opening_geometry(Some([1910.0, 1070.0, 1200.0, 800.0]), monitor).0, None, "a sliver at the bottom right");
         assert_eq!(opening_geometry(Some([-1150.0, 50.0, 1200.0, 800.0]), monitor).0, None, "and at the left edge");
         assert_eq!(opening_geometry(Some([50.0, -760.0, 1200.0, 800.0]), monitor).0, None, "and at the top");
-        // Enough of it to grab: kept, however far over the edge the rest hangs.
+        // Review on #10400: the title bar is at the top, so any window reaching above the monitor
+        // is out of reach, however much of it is visible further down.
+        assert_eq!(opening_geometry(Some([-1000.0, -600.0, 1200.0, 800.0]), monitor).0, None, "its title bar is off-screen");
+        assert_eq!(opening_geometry(Some([100.0, -1.0, 1200.0, 800.0]), monitor).0, None, "even by a pixel");
+        // Enough of it to grab: kept, however far over the left or right edge the rest hangs.
         assert_eq!(opening_geometry(Some([1700.0, 900.0, 1200.0, 800.0]), monitor).0, Some(egui::pos2(1700.0, 900.0)));
-        assert_eq!(opening_geometry(Some([-1000.0, -600.0, 1200.0, 800.0]), monitor).0, Some(egui::pos2(-1000.0, -600.0)));
+        assert_eq!(opening_geometry(Some([-1000.0, 50.0, 1200.0, 800.0]), monitor).0, Some(egui::pos2(-1000.0, 50.0)));
+        assert_eq!(opening_geometry(Some([100.0, 0.0, 1200.0, 800.0]), monitor).0, Some(egui::pos2(100.0, 0.0)), "the very top is fine");
     }
 
     #[test]
