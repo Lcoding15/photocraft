@@ -53,6 +53,34 @@ pub fn open(app: &mut PhotocraftApp, ctx: &Context, at: [f32; 2], x: f64, y: f64
     true
 }
 
+/// What a laid-out menu was: its place and its layers. The menu uses one area, so a new menu has
+/// to forget the size the last one left behind.
+type Shown = (u32, u32, Vec<u64>);
+
+/// Forget the size the menu's area was last shown at when this menu is a different one, so it
+/// lays its rows out in the room it needs rather than in the box a shorter list left behind
+/// (#10467). One stable area, measured afresh: an area per click position would pile up in egui's
+/// memory for the whole session (#10467 review).
+fn forget_size_if_new(ctx: &Context, menu: &LayerMenu) {
+    let shown: Shown = (menu.pos[0].to_bits(), menu.pos[1].to_bits(), menu.layers.iter().map(|l| l.0).collect());
+    let key = menu_id().with("shown");
+    let same = ctx.data_mut(|d| {
+        let same = d.get_temp::<Shown>(key).as_ref() == Some(&shown);
+        if !same {
+            d.insert_temp(key, shown);
+        }
+        same
+    });
+    if same {
+        return;
+    }
+    let layer = egui::LayerId::new(egui::Order::Foreground, menu_id());
+    if let Some(mut state) = egui::AreaState::load(ctx, menu_id()) {
+        state.size = None;
+        ctx.memory_mut(|m| m.areas_mut().set_state(layer, state));
+    }
+}
+
 /// Choose a layer from the menu: select it (one `layer.select`) and close the menu.
 pub fn choose(app: &mut PhotocraftApp, layer: u64) {
     app.ui.layer_menu = None;
@@ -65,13 +93,6 @@ fn menu_id() -> egui::Id {
     egui::Id::unique("canvas-layer-menu")
 }
 
-/// The menu's area, one per opening. An area keeps the size it was last shown at and lays its
-/// contents out in it: a long menu shown in the area a short one sized (cut by the screen edge
-/// when opened low) stayed a scroll box of a few rows (#10467).
-fn area_id(menu: &LayerMenu) -> egui::Id {
-    menu_id().with((menu.pos[0].to_bits(), menu.pos[1].to_bits(), menu.layers.iter().map(|l| l.0).collect::<Vec<_>>()))
-}
-
 /// Show the open menu. Escape or a click outside closes it.
 pub fn show(app: &mut PhotocraftApp, ctx: &Context) {
     let Some(menu) = app.ui.layer_menu.clone() else { return };
@@ -80,7 +101,8 @@ pub fn show(app: &mut PhotocraftApp, ctx: &Context) {
         return;
     }
     let active = app.session.active().and_then(|st| st.active_layer).map(|l| l.0);
-    let id = area_id(&menu);
+    let id = menu_id();
+    forget_size_if_new(ctx, &menu);
     let screen = ctx.content_rect();
     let size = ctx.memory(|m| m.area_rect(id)).map_or(egui::vec2(200.0, 24.0 * menu.layers.len() as f32 + 12.0), |r| r.size());
     let pos = egui::pos2(menu.pos[0].min(screen.right() - size.x).max(screen.left()), menu.pos[1].min(screen.bottom() - size.y).max(screen.top()));
@@ -313,7 +335,7 @@ mod tests {
         h.run_steps(4);
         h.state_mut().ui.layer_menu = Some(LayerMenu { pos: [300.0, 600.0], layers: (1..=12).map(|i| (i, format!("Layer {i}"))).collect() });
         h.run_steps(4);
-        let id = area_id(h.state().ui.layer_menu.as_ref().expect("still open"));
+        let id = menu_id();
         let rect = h.ctx.memory(|m| m.area_rect(id)).expect("the menu is shown");
         assert!(rect.height() >= 12.0 * 22.0, "every row fits: {rect:?}");
         assert!(rect.bottom() <= 700.0 + 0.5 && rect.top() >= 0.0, "on the screen: {rect:?}");
