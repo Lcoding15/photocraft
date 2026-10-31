@@ -230,6 +230,7 @@ impl Registry {
     }
 }
 
+/// The command registry, built on first use and shared for the rest of the process.
 fn registry() -> &'static Registry {
     static REGISTRY: std::sync::OnceLock<Registry> = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| Registry::new(build()))
@@ -237,6 +238,7 @@ fn registry() -> &'static Registry {
 
 // ---------- the table ----------
 
+/// Every command this module owns, in menu order: the table the registry is built from once.
 #[allow(clippy::too_many_lines)]
 fn build() -> Vec<CommandSpec> {
     let mut v = vec![
