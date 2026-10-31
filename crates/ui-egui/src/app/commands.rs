@@ -252,6 +252,11 @@ impl PhotocraftApp {
         }
     }
 
+    /// Bring the shell's per-document state back in line with the engine's open documents, after
+    /// a command may have opened, closed or reordered them: tool work in progress that belongs to
+    /// another document or tool is cancelled, each view and window follows its document to its new
+    /// index (an untracked view keeps its own), and, with Open Documents as Tabs off, a document
+    /// that has just appeared gets a floating window of its own.
     pub fn sync_views(&mut self) {
         // The Paths panel selection belongs to the active document. Ordinary edits replace the
         // snapshot and advance its revision; a replaced snapshot without a newer revision is a
