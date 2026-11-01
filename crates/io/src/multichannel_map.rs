@@ -25,71 +25,69 @@ const ALPHA_IDENTIFIERS: u16 = 1053;
 /// selection ids (1069) and layer groups enabled (1072). A Multichannel document has no layers.
 const LAYER_ONLY_RESOURCES: [u16; 4] = [ids::LAYER_STATE, ids::LAYER_GROUP_INFO, 1069, 1072];
 
-/// Value of sample `i` of a big-endian plane; 0 for a sample past its end.
-fn decode(plane: &[u8], i: usize, s: SampleType) -> f32 {
-    match s {
-        SampleType::U8 => plane.get(i).map_or(0.0, |&b| f32::from(b) / 255.0),
-        SampleType::U16 => sample::<2>(plane, i).map_or(0.0, |b| f32::from(u16::from_be_bytes(b)) / 65535.0),
-        SampleType::F32 => sample::<4>(plane, i).map_or(0.0, f32::from_be_bytes),
-    }
-}
-
-/// The `N` bytes of sample `i`, if the plane holds them.
-fn sample<const N: usize>(plane: &[u8], i: usize) -> Option<[u8; N]> {
-    let start = i.checked_mul(N)?;
-    plane.get(start..start.checked_add(N)?)?.try_into().ok()
-}
-
-/// Can a plane of `n` samples be read here: do its decoded values keep to the decoder's byte
-/// budget, and does that count of bytes fit a `usize` and an `isize`? An 8-bit plane within the
-/// budget can still need four times as many bytes once it is `f32`s, and on wasm32 a plane a
-/// 64-bit host reads happily need not fit a 32-bit `usize` at all (#8615).
-fn plane_fits(n: usize) -> bool {
-    n.checked_mul(std::mem::size_of::<f32>())
-        .is_some_and(|bytes| u64::try_from(bytes).is_ok_and(|b| b <= photocraft_psd::compression::MAX_DECODED_BYTES) && isize::try_from(bytes).is_ok())
+/// Value of sample `i` of a big-endian plane.
+fn decode(plane: &[u8], i: usize, s: SampleType) -> Option<f32> {
+    let start = i.checked_mul(s.bytes())?;
+    let bytes = plane.get(start..start.checked_add(s.bytes())?)?;
+    Some(match s {
+        SampleType::U8 => f32::from(*bytes.first()?) / 255.0,
+        SampleType::U16 => f32::from(u16::from_be_bytes(bytes.try_into().ok()?)) / 65535.0,
+        SampleType::F32 => f32::from_be_bytes(bytes.try_into().ok()?),
+    })
 }
 
 /// Fills `doc` (already in Multichannel mode at the file depth) from the merged planes `all`.
-/// `Err` when the planes are too large to read here: the caller reports the document as
-/// damaged, since its channels are missing.
-pub(crate) fn import(file: &PsdFile, all: &[u8], doc: &mut Document, names: &[String], warnings: &mut Vec<String>) -> Result<(), String> {
+pub(crate) fn import(file: &PsdFile, all: &[u8], doc: &mut Document, names: &[String], warnings: &mut Vec<String>) -> Result<(), crate::IoError> {
     let h = &file.header;
     let depth = doc.depth;
     let (w, hh) = (h.width as usize, h.height as usize);
-    // Checked, as the flattened import's sizes are: on wasm32 `w * hh` need not fit a `usize`
-    // (#8615).
-    let (Some(n), Some(plane)) = (w.checked_mul(hh).filter(|n| plane_fits(*n)), h.row_bytes().checked_mul(hh)) else {
-        return Err("multichannel: the image is too large to read here".into());
-    };
-    let canvas = Rect::new(0, 0, h.width as i32, h.height as i32);
+    let invalid = || crate::IoError::Unsupported("multichannel pixel size overflow".into());
+    let plane = h.row_bytes().checked_mul(hh).ok_or_else(invalid)?;
+    let pixels = w.checked_mul(hh).ok_or_else(invalid)?;
+    if pixels.checked_mul(depth.bytes()).ok_or_else(invalid)? != plane {
+        return Err(crate::IoError::Unsupported("multichannel channel depth does not match its pixel layout".into()));
+    }
     let fmt = PixelFormat::new(ColorMode::Grayscale, depth, false);
     for k in 0..usize::from(h.channels) {
-        let range = k.checked_mul(plane).and_then(|start| Some(start..start.checked_add(plane)?));
-        let Some(p) = range.and_then(|r| all.get(r)) else {
+        let start = k.checked_mul(plane).ok_or_else(invalid)?;
+        let end = start.checked_add(plane).ok_or_else(invalid)?;
+        if all.get(start..end).is_none() {
             warnings.push(format!("multichannel: channel {} is missing", k + 1));
             break;
-        };
-        let vals: Vec<f32> = (0..n).map(|i| 1.0 - decode(p, i, depth)).collect();
-        let mut s = Surface::new(fmt);
-        s.write_region(canvas, &vals);
-        s.prune();
+        }
         let name = names.get(k).cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| format!("Channel {}", k + 1));
-        // Without DisplayInfo the channels print in black, as Photoshop shows them. DisplayInfo
-        // turns alpha-type channels (selected / masked areas) back into alpha channels.
-        doc.channels.push(AlphaChannel { spot: Some((Color::BLACK, 0.0)), ..AlphaChannel::new(name, s) });
+        doc.channels.push(AlphaChannel { spot: Some((Color::BLACK, 0.0)), ..AlphaChannel::new(name, Surface::new(fmt)) });
     }
     if let Some(r) = file.resource(crate::channel_map::DISPLAY_INFO) {
         crate::channel_map::apply_display_info(&r.data, true, 0, &mut doc.channels);
     } else if let Some(r) = file.resource(crate::channel_map::DISPLAY_INFO_OLD) {
         crate::channel_map::apply_display_info(&r.data, false, 0, &mut doc.channels);
     }
-    // Alpha-type planes are stored as-is, not as ink: undo the inversion for them.
-    for ch in doc.channels.iter_mut().filter(|c| c.spot.is_none()) {
-        let vals: Vec<f32> = ch.surface.read_region(canvas).chunks_exact(ch.surface.channels()).map(|v| 1.0 - v[0]).collect();
-        let mut s = Surface::new(fmt);
-        s.write_region(canvas, &vals);
-        s.prune();
-        ch.surface = s;
+    for (k, ch) in doc.channels.iter_mut().enumerate() {
+        let start = k.checked_mul(plane).ok_or_else(invalid)?;
+        let p = all.get(start..start.checked_add(plane).ok_or_else(invalid)?).ok_or_else(invalid)?;
+        // DisplayInfo is known before conversion: alpha channels need no inversion or
+        // second full-plane readback. One tile row is the only conversion buffer.
+        for y in (0..hh).step_by(photocraft_geom::TILE_SIZE as usize) {
+            let bottom = (y + photocraft_geom::TILE_SIZE as usize).min(hh);
+            let samples = w.checked_mul(bottom - y).ok_or_else(invalid)?;
+            let len = samples.checked_mul(depth.bytes()).ok_or_else(invalid)?;
+            let mut bytes = Vec::new();
+            bytes.try_reserve_exact(len).map_err(|_| crate::IoError::OutOfMemory("not enough memory for multichannel pixels".into()))?;
+            for i in y.checked_mul(w).ok_or_else(invalid)?..bottom.checked_mul(w).ok_or_else(invalid)? {
+                let v = decode(p, i, depth).ok_or_else(invalid)?;
+                let v = if ch.spot.is_some() { 1.0 - v } else { v };
+                match depth {
+                    SampleType::U8 => bytes.push((v.clamp(0.0, 1.0) * 255.0).round() as u8),
+                    SampleType::U16 => bytes.extend_from_slice(&((v.clamp(0.0, 1.0) * 65535.0).round() as u16).to_ne_bytes()),
+                    SampleType::F32 => bytes.extend_from_slice(&v.to_ne_bytes()),
+                }
+            }
+            ch.surface
+                .try_write_interleaved(Rect::new(0, y as i32, h.width as i32, bottom as i32), &bytes)
+                .map_err(|e| crate::IoError::OutOfMemory(format!("multichannel pixel allocation: {e}")))?;
+        }
+        ch.surface.prune();
     }
     Ok(())
 }
@@ -228,32 +226,18 @@ pub(crate) fn layerless_file(
 }
 
 #[cfg(test)]
-mod tests {
+mod import_allocation_tests {
     use super::*;
 
-    /// #8615: a sample past the end of its plane reads as 0 instead of indexing past it.
     #[test]
-    fn a_sample_past_the_plane_reads_as_zero() {
-        assert_eq!(decode(&[255], 0, SampleType::U8), 1.0);
-        assert_eq!(decode(&[255, 255, 0], 1, SampleType::U16), 0.0);
-        assert_eq!(decode(&[0, 0, 128], 0, SampleType::F32), 0.0);
-        assert_eq!(decode(&[], usize::MAX, SampleType::F32), 0.0);
-        assert_eq!(decode(&[0xff, 0xff], 0, SampleType::U16), 1.0);
-    }
-
-    /// #8615 review: a plane whose sample count runs past what 32 bits hold is refused, so the
-    /// import says the document is damaged instead of reading past the planes. The budget is in
-    /// decoded bytes, four per sample, and is smaller on a 32-bit target.
-    #[test]
-    fn a_plane_too_large_for_the_decoder_is_refused() {
-        let max = photocraft_psd::compression::MAX_DECODED_BYTES / 4;
-        assert!(plane_fits(4096 * 4096), "a 16 MP plane is read");
-        assert!(plane_fits(usize::try_from(max).unwrap_or(usize::MAX)), "right at the budget");
-        let over = usize::try_from(max + 1).unwrap_or(usize::MAX);
-        assert!(!plane_fits(over), "one sample past it");
-        // 65536 x 65536 is 2^32 samples: a 32-bit `usize` cannot even count them, and four times
-        // that many bytes is past the budget on either target.
-        assert!(!plane_fits(1usize << 32), "a plane that overflows 32 bits");
-        assert!(!plane_fits(usize::MAX), "and the extreme the arithmetic has to survive");
+    fn missing_planes_remain_recoverable_without_reading_past_input() {
+        let file = photocraft_psd::testgen::merged_only(photocraft_psd::Version::Psd, PsdMode::Multichannel, 8, Compression::Raw, 3, 2);
+        let mut doc = Document::new("Partial", photocraft_geom::Size::new(3, 2), ColorMode::Multichannel, SampleType::U8);
+        let mut warnings = Vec::new();
+        import(&file, &[0; 6], &mut doc, &[], &mut warnings).unwrap();
+        assert_eq!(doc.channels.len(), 1);
+        assert_eq!(doc.channels[0].surface.read_region(doc.bounds()), vec![1.0; 6]);
+        assert_eq!(warnings.len(), 1);
+        assert!(decode(&[], usize::MAX, SampleType::F32).is_none());
     }
 }
