@@ -47,6 +47,22 @@ fn bounded_selection(doc: &Document, sel: &[LayerId]) -> Vec<(LayerId, Rect)> {
     top_level(doc, sel).into_iter().filter_map(|id| Some((id, align_bounds(doc.layer(id)?, doc.bounds(), doc.pixel_format().sample)?))).collect()
 }
 
+/// `layer.align.<kind>`: move every selected top-level layer so that `kind`'s edge or centre
+/// meets the same line. `"to"` says which line, and all of it happens in one undoable step:
+///
+/// - `"selection"`: the active selection's content bounds. It needs one, and says so when there
+///   is none rather than falling back to something else.
+/// - `"canvas"`: the canvas, whatever is selected in the image and however many layers are
+///   selected. PhotoCraft's own target; Photoshop has no separate menu item for it (#10337).
+/// - `"artboard"`: the artboard all the layers sit on, so they stay on their board; the canvas
+///   when they are on none or spread over several. This is what Photoshop's Align To › Canvas
+///   does with artboards, and what an imported .atn's `alignToCanvas` flag means.
+/// - `"auto"` (the default) follows Photoshop's own behaviour: the selection when there is one,
+///   else, for a single layer, its artboard or the canvas (aligning it to itself would do
+///   nothing), else the selected layers' own union.
+/// - `"layers"`: always that union.
+///
+/// Linked layers travel with the layer they are linked to. Returns how many layers moved.
 pub(super) fn align(s: &mut Session, p: &Value, kind: &str) -> Result<Value> {
     let cmd = format!("layer.align.{kind}");
     let edge = Edge::parse(kind).ok_or_else(|| bad(&cmd, "unknown edge"))?;
