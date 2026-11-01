@@ -611,9 +611,20 @@ mod window_geometry_tests {
         assert_eq!(opening_geometry(Some([2500.0, 50.0, 1000.0, 700.0]), monitor), (None, egui::vec2(1000.0, 700.0)), "off the monitor: size only");
         assert_eq!(opening_geometry(Some([-1000.0, 50.0, 1000.0, 700.0]), monitor).0, None, "left of it too");
         assert_eq!(opening_geometry(Some([100.0, 50.0, 1000.0, 700.0]), None).0, None, "no monitor known: size only");
-        for bad in [[f32::NAN, 0.0, 1000.0, 700.0], [0.0, 0.0, f32::INFINITY, 700.0], [0.0, 0.0, 1.0e9, 700.0]] {
+        for bad in [
+            [f32::NAN, 0.0, 1000.0, 700.0],
+            [0.0, f32::NAN, 1000.0, 700.0],
+            [0.0, 0.0, f32::NAN, 700.0],
+            [0.0, 0.0, 1000.0, f32::NAN],
+            [0.0, 0.0, f32::INFINITY, 700.0],
+            [f32::NEG_INFINITY, 0.0, 1000.0, 700.0],
+            [0.0, 0.0, 1.0e9, 700.0],
+        ] {
             assert_eq!(opening_geometry(Some(bad), monitor), (None, egui::vec2(1360.0, 900.0)), "corrupt {bad:?}: the default");
         }
+        // A negative size is a number, so it is not corrupt — it just cannot be smaller than the
+        // minimum (#10400 review).
+        assert_eq!(opening_geometry(Some([100.0, 50.0, -500.0, -1.0]), monitor), (Some(egui::pos2(100.0, 50.0)), egui::vec2(900.0, 600.0)));
         // Review on #10400: a position on the monitor by its corner alone is out of reach — the
         // window that would open there is dropped back to the platform's own placement.
         assert_eq!(opening_geometry(Some([1910.0, 1070.0, 1200.0, 800.0]), monitor).0, None, "a sliver at the bottom right");
