@@ -167,6 +167,29 @@ fn an_alt_held_before_alt_tab_stops_underlining_on_the_way_back() {
     assert_eq!(Keys::current(&h.ctx).focus, Some(0), "and is a tap, as ever");
 }
 
+/// #9763 review: the window can come back with the switcher's Alt still reported, and the next
+/// thing the user does may be an ordinary key press. That press neither underlines the mnemonics
+/// nor opens the menu whose letter it is, and a real Alt tap after it still does.
+#[test]
+fn a_key_press_while_the_switchers_alt_is_still_reported_opens_no_menu() {
+    let mut h = bar();
+    // Alt+Tab away and back, so the Alt egui still reports is the switcher's.
+    h.key_down(egui::Key::AltLeft);
+    h.run_steps(2);
+    h.event(egui::Event::WindowFocused(false));
+    h.run_steps(2);
+    h.event(egui::Event::WindowFocused(true));
+    h.run_steps(3);
+    assert!(!Keys::current(&h.ctx).show_underlines(&h.ctx), "the switcher's Alt underlines nothing");
+    // Typing on: an ordinary press, no Alt of its own. "F" is the File menu's mnemonic.
+    key(&mut h, egui::Key::F);
+    assert_eq!(Keys::current(&h.ctx).focus, None, "no keyboard on the bar");
+    assert!(!Keys::current(&h.ctx).show_underlines(&h.ctx), "and still nothing underlined");
+    // A tap of this window's own Alt works as ever.
+    alt_tap(&mut h);
+    assert_eq!(Keys::current(&h.ctx).focus, Some(0), "a real Alt tap still reaches the bar");
+}
+
 /// Alt's own auto-repeat (holding it after Alt+wheel) doesn't make the release a tap again, and
 /// holding Alt alone long enough to repeat is still a tap.
 #[test]
