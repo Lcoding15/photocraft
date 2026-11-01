@@ -814,6 +814,11 @@ fn open_documents_as_tabs_preference_controls_floating_windows() {
     app.session.edit_prefs(|p| p.workspace.open_documents_as_tabs = true);
     app.open_bytes("b.psd", b"x").unwrap();
     assert_eq!(app.ui.windows.len(), 2);
+    // #9728 review: the preference says where a document opens, so turning it back on leaves the
+    // two already floating where they are, as Photoshop does. Consolidate All to Tabs docks them.
+    assert!(app.ui.windows.iter().all(|w| w.floating), "the open windows keep floating");
+    crate::menus::invoke(&mut app, &egui::Context::default(), "window.arrange.consolidateAllToTabs", json!({})).unwrap();
+    assert!(app.ui.windows.is_empty(), "every document is a tab again: {:?}", app.ui.windows.len());
 }
 
 #[test]
