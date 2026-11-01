@@ -117,10 +117,19 @@ fn import_abr(s: &mut Session, p: &Value) -> Result<Value> {
     )
 }
 
-fn add_abr_presets(s: &mut Session, p: &Value, group: String, imp: photocraft_io::abr_map::AbrImport) -> Result<Value> {
-    // Re-importing a file replaces its group instead of duplicating it.
-    if p.get("replace").and_then(Value::as_bool).unwrap_or(true) {
+fn add_abr_presets(s: &mut Session, p: &Value, group: String, mut imp: photocraft_io::abr_map::AbrImport) -> Result<Value> {
+    let mut group = group;
+    if p.get("replace").and_then(Value::as_bool).unwrap_or(false) {
+        // Asked for: the group's presets give way to the file's.
         s.tools.presets.retain(|x| x.builtin || x.group != group);
+    } else if s.tools.presets.iter().any(|x| !x.builtin && x.group == group) {
+        // Never deleted unasked (#10640): the group named after the file may hold brushes the user
+        // edited or moved there, and the library is outside the history. The file's presets go
+        // into a group of their own beside it ("Kit (2)"), as Photoshop adds an imported set.
+        group = free_group(&s.tools.presets, &group);
+        for preset in &mut imp.presets {
+            preset.group.clone_from(&group);
+        }
     }
     let mut taken = UniqueNames::new(s.tools.presets.iter().map(|x| x.name.as_str()));
     let mut names = Vec::with_capacity(imp.presets.len());
@@ -144,6 +153,13 @@ fn add_abr_presets(s: &mut Session, p: &Value, group: String, imp: photocraft_io
         s.tools.presets.iter().filter(|x| !x.builtin && x.group == group).flat_map(|x| (1..=x.folder.len()).filter_map(|d| x.folder.get(..d))).collect();
     let folders = folders.len();
     Ok(json!({ "group": group, "imported": names, "count": names.len(), "folders": folders, "version": imp.version, "warnings": imp.warnings }))
+}
+
+/// `base`, or the first of "base (2)", "base (3)", … that no preset's group uses.
+fn free_group(presets: &[photocraft_paint::BrushPreset], base: &str) -> String {
+    let used = |g: &str| presets.iter().any(|x| x.group == g);
+    // Among presets.len() + 1 candidates at least one is free.
+    (2..=presets.len().saturating_add(2)).map(|n| format!("{base} ({n})")).find(|g| !used(g)).unwrap_or_else(|| base.to_string())
 }
 
 /// Largest canvas (268 MP) a brush may be made from.
@@ -243,7 +259,7 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Import Brushes…",
             menu: &[],
             shortcut: None,
-            params: r##"{"path":".abr file"?,"data":base64 bytes?,"group":string?=file name,"replace":bool=true (replace a group of the same name),"select":bool=false (make the first imported preset current)} → {group, imported, count, folders (nested folders kept from the file), version, warnings}"##,
+            params: r##"{"path":".abr file"?,"data":base64 bytes?,"group":string?=file name,"replace":bool=false (replace a group of the same name; otherwise a group that already holds presets is kept and the file goes into "name (2)"),"select":bool=false (make the first imported preset current)} → {group, imported, count, folders (nested folders kept from the file), version, warnings}"##,
             enabled: always,
             run: import_abr,
             journal: true,
@@ -394,6 +410,31 @@ mod tests {
         .unwrap()
     }
 
+    /// #10640: importing a file named like a group that holds the user's own brushes deleted them
+    /// all, with no prompt and no undo. They stay, and the file's presets go into a group beside it.
+    #[test]
+    fn reimporting_keeps_the_users_brushes_in_a_group_of_the_same_name() {
+        let mut s = Session::new();
+        let data = photocraft_paint::tile::b64_encode(&abr_v2());
+        s.execute("brush.presets.importAbr", json!({"data": data, "group": "Kit"})).unwrap();
+        // A brush of the user's own, moved into the group.
+        let mut mine = s.tools.presets.iter().find(|p| p.builtin).unwrap().clone();
+        (mine.builtin, mine.name, mine.group) = (false, "My Chalk".into(), "Kit".into());
+        s.tools.presets.push(mine);
+        let in_group = |s: &Session, g: &str| s.tools.presets.iter().filter(|p| p.group == g).map(|p| p.name.clone()).collect::<Vec<_>>();
+        let kit = in_group(&s, "Kit");
+        assert_eq!(kit.len(), 3);
+        let r = s.execute("brush.presets.importAbr", json!({"data": data, "group": "Kit"})).unwrap();
+        assert_eq!(r["group"], "Kit (2)");
+        assert_eq!(in_group(&s, "Kit"), kit, "nothing in Kit was deleted");
+        assert_eq!(in_group(&s, "Kit (2)").len(), 2);
+        let r = s.execute("brush.presets.importAbr", json!({"data": data, "group": "Kit"})).unwrap();
+        assert_eq!(r["group"], "Kit (3)", "the next free name");
+        // A group with no presets of the user's is filled as before.
+        let r = s.execute("brush.presets.importAbr", json!({"data": data, "group": "Fresh"})).unwrap();
+        assert_eq!(r["group"], "Fresh");
+    }
+
     #[test]
     fn import_adds_a_group_and_paints() {
         let mut s = Session::new();
@@ -406,9 +447,11 @@ mod tests {
         assert_eq!(s.tools.presets.len(), before + 2);
         assert!(s.tools.presets.iter().filter(|p| p.group == "Legacy").all(|p| !p.builtin));
         assert!(matches!(s.tools.brush.tip, photocraft_paint::TipShape::Sampled(_)));
-        // Re-import replaces the group.
-        s.execute("brush.presets.importAbr", json!({"data": data, "group": "Legacy"})).unwrap();
-        assert_eq!(s.tools.presets.len(), before + 2);
+        // Re-importing keeps the group and adds the file beside it (#10640); asked to, it replaces.
+        let again = s.execute("brush.presets.importAbr", json!({"data": data, "group": "Legacy"})).unwrap();
+        assert_eq!((again["group"].as_str(), s.tools.presets.len()), (Some("Legacy (2)"), before + 4));
+        s.execute("brush.presets.importAbr", json!({"data": data, "group": "Legacy (2)", "replace": true})).unwrap();
+        assert_eq!(s.tools.presets.len(), before + 4, "replace swaps the group's presets for the file's");
         // Imported presets paint.
         s.execute("file.new", json!({"width": 64, "height": 64})).unwrap();
         s.execute("paint.stroke", json!({"points": [[5, 30], [60, 30]], "preset": "9 px Round"})).unwrap();
