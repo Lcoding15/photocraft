@@ -171,6 +171,7 @@ fn to_psd_rect(r: photocraft_geom::Rect) -> PsdRect {
     PsdRect { top: r.y0, left: r.x0, bottom: r.y1, right: r.x1 }
 }
 
+/// A 0..1 value as the byte PSD stores it, clamped: a mask density, a layer opacity.
 fn q255(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
