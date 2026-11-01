@@ -457,3 +457,32 @@ fn view_show_edit_pins_hides_the_pins() {
     app.ui.view.extras = true;
     assert_eq!(pins(&app), 2);
 }
+
+/// #1119 review: a pin the user cannot see is not there to be grabbed. With Edit Pins off a
+/// press on one neither drags nor deletes it — it places a new pin, as a press on the mesh
+/// does — and with Edit Pins on it drags again.
+#[test]
+fn a_hidden_pin_cannot_be_dragged_or_deleted() {
+    let ctx = egui::Context::default();
+    let mut app = puppet_app(&ctx);
+    gesture(&mut app, [25.0, 40.0], [25.0, 40.0]);
+    let dst = |app: &PhotocraftApp| app.distort.puppet.as_ref().unwrap().warp.pins[0].dst;
+    let count = |app: &PhotocraftApp| app.distort.puppet.as_ref().unwrap().warp.pins.len();
+    assert_eq!((count(&app), dst(&app)), (1, [25.0, 40.0]));
+
+    app.ui.view.show.edit_pins = false;
+    // A press on the hidden pin, dragged aside: it stays put, and the press placed a pin instead.
+    gesture(&mut app, [25.0, 40.0], [40.0, 40.0]);
+    assert_eq!(dst(&app), [25.0, 40.0], "the hidden pin did not move");
+    assert_eq!(count(&app), 2, "the press placed a new pin, as one on the mesh does");
+    // Alt-clicking it does not delete it either.
+    pointer(&mut app, ToolEvent::Down { x: 25.0, y: 40.0, pressure: 1.0 }, egui::Modifiers::ALT);
+    pointer(&mut app, ToolEvent::Up { x: 25.0, y: 40.0 }, egui::Modifiers::ALT);
+    assert_eq!(count(&app), 2, "nothing deleted while the pins are hidden");
+
+    // Shown again, the first pin drags as ever.
+    app.ui.view.show.edit_pins = true;
+    gesture(&mut app, [25.0, 40.0], [35.0, 45.0]);
+    assert_eq!(dst(&app), [35.0, 45.0], "the shown pin moves again");
+    assert_eq!(count(&app), 2, "and no pin was added");
+}

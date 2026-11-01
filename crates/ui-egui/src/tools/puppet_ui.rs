@@ -295,12 +295,16 @@ pub fn control(app: &mut PhotocraftApp, ui: &Value) -> Result<Value, String> {
 
 pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) {
     let tol = crate::distort_ui::tolerance(app);
+    // Pins hidden by View › Show › Edit Pins are not there to be grabbed, moved or deleted: a
+    // press lands on the mesh instead and places a new pin, as a hidden guide is not draggable
+    // either (`rulers::guide_at`, #1119). Keep this in step with the gate in [`draw`].
+    let pins_shown = app.ui.view.shows(app.ui.view.show.edit_pins);
     let Some(s) = app.distort.puppet.as_mut() else { return };
     match ev {
         ToolEvent::Down { x, y, .. } => {
             let p = [x, y];
             let before = s.warp.pins.clone();
-            if let Some(i) = s.pin_at(p, tol) {
+            if let Some(i) = s.pin_at(p, tol).filter(|_| pins_shown) {
                 if mods.alt {
                     s.selected = Some(i);
                     s.delete_selected_pin();
