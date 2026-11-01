@@ -171,8 +171,13 @@ fn to_psd_rect(r: photocraft_geom::Rect) -> PsdRect {
     PsdRect { top: r.y0, left: r.x0, bottom: r.y1, right: r.x1 }
 }
 
-/// A 0..1 value as the byte PSD stores it, clamped: a mask density, a layer opacity.
+/// A 0..1 value as the byte PSD stores it, clamped: a mask density, a layer opacity. A value that
+/// is not a number counts as full, so a layer whose opacity arrived broken is saved visible; `as
+/// u8` alone would turn NaN into 0 and hide it without a word (#8612 review).
 fn q255(v: f32) -> u8 {
+    if v.is_nan() {
+        return 255;
+    }
     (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 

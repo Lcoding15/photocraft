@@ -644,6 +644,23 @@ fn a_layer_past_the_psd_size_limit_is_saved_without_its_pixels() {
     assert!(within_psd_limit(Rect::new(0, 0, 300_000, 300_000)) && !within_psd_limit(Rect::new(0, 0, 1, 300_001)));
 }
 
+/// #8612 review: a value PSD stores as a byte survives the extremes. A broken opacity counts as
+/// full, since `as u8` turns NaN into 0, which would save the layer invisible, and the limit rect
+/// is checked at exactly 300000 px and one past it.
+#[test]
+fn a_byte_value_and_the_layer_limit_hold_at_their_extremes() {
+    use photocraft_geom::Rect;
+    assert_eq!((q255(0.0), q255(0.5), q255(1.0)), (0, 128, 255));
+    assert_eq!(q255(f32::NAN), 255, "not a number is full, never invisible");
+    assert_eq!((q255(f32::INFINITY), q255(f32::NEG_INFINITY)), (255, 0));
+    assert_eq!((q255(-1.0), q255(2.0)), (0, 255), "out of range clamps");
+    // A layer this wide or tall is still a PSD layer; one pixel more is not.
+    assert!(within_psd_limit(Rect::new(0, 0, 300_000, 1)) && within_psd_limit(Rect::new(0, 0, 1, 300_000)));
+    assert!(!within_psd_limit(Rect::new(0, 0, 300_001, 1)) && !within_psd_limit(Rect::new(0, 0, 1, 300_001)));
+    // The limit is the span, not the coordinates: a layer far from the origin fits too.
+    assert!(within_psd_limit(Rect::new(1_000_000, 0, 1_300_000, 1)));
+}
+
 /// A mask is held to the same limits: one past 300000 px, and a sparse one within it whose box
 /// is too large to gather, are errors (the caller saves the layer without the mask), never a
 /// huge dense buffer. A small mask still writes its channel.
