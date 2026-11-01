@@ -232,6 +232,9 @@ struct SelectionPaintInput<'a> {
     idx: usize,
 }
 
+/// Paint the marching ants round the document's selection: Select and Mask's refined one, a
+/// floating piece's own, or the document's. The main window paints them after its grid and
+/// guides, so they are never hidden by a line on the same pixels (#10671).
 fn paint_selection_outline(app: &mut PhotocraftApp, input: SelectionPaintInput<'_>) {
     // Select and Mask outlines its refined selection (on its preview proxy, reduced by `k`) in
     // the Marching Ants view and hides the ants in the others.
@@ -324,6 +327,9 @@ fn paint_selection_outline(app: &mut PhotocraftApp, input: SelectionPaintInput<'
     }
 }
 
+/// Paint the document itself: its checkerboard, the composited pixels and the border round them.
+/// Returns whether anything reaches beyond the canvas, the shape slot the layer-edge outline is
+/// drawn into later, and the rect the document occupies on screen.
 fn paint_canvas(app: &mut PhotocraftApp, ui: &egui::Ui, view: &View, xf: ViewXform, input: &CanvasPaintInput<'_>) -> (bool, egui::layers::ShapeIdx, Rect) {
     let ctx = input.ctx;
     let rect = input.rect;
@@ -1252,6 +1258,9 @@ struct CanvasOverlayInput<'a> {
     display_view: &'a View,
 }
 
+/// Everything the main window draws over its document, in the order Photoshop draws it: the
+/// slices, the grid and guides, then the marching ants, then the previews and frames of whatever
+/// is in progress (a crop, a transform, a tool's own overlay), and the tool cursor last.
 fn paint_primary_overlays(app: &mut PhotocraftApp, ui: &mut egui::Ui, view: &mut View, input: &CanvasOverlayInput<'_>) {
     let ctx = input.ctx;
     let painter = input.painter;

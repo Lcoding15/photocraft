@@ -2566,9 +2566,11 @@ fn guides_draw_over_the_transform_preview_and_under_its_box() {
     assert!(guide < frame, "the box ({frame}) draws over the guide ({guide})");
 }
 
+/// #10671: the marching ants draw over the grid and guides, as in Photoshop. A guide along a
+/// selection's edge used to hide them wherever both landed on the same screen pixels.
 #[test]
 fn the_selection_ants_draw_over_the_guides_and_grid() {
-    // #10671: a guide along a selection's edge was drawn after the marching ants, hiding them at
+    // a guide along a selection's edge was drawn after the marching ants, hiding them at
     // the zoom levels where both fell on the same screen pixels. The ants go over guides and grid.
     let ctx = egui::Context::default();
     let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
@@ -2604,6 +2606,16 @@ fn the_selection_ants_draw_over_the_guides_and_grid() {
         panic!("both painted: ants {ants:?}, guide {guide:?}");
     };
     assert!(guide < ants, "the ants ({ants}) draw over the guide ({guide})");
+    // And over the grid (#10671 review): every line that spans the canvas — grid lines and
+    // guides both do, while the tool overlays don't — is painted before the ants.
+    let spans_canvas = |p: &[Pos2; 2]| {
+        let vertical = (p[0].x - p[1].x).abs() < 0.01 && (p[0].y - p[1].y).abs() >= 299.0;
+        vertical || ((p[0].y - p[1].y).abs() < 0.01 && (p[0].x - p[1].x).abs() >= 399.0)
+    };
+    let lines: Vec<usize> =
+        shapes.iter().enumerate().filter(|(_, s)| matches!(s, egui::Shape::LineSegment { points, .. } if spans_canvas(points))).map(|(i, _)| i).collect();
+    assert!(lines.len() > 1, "the grid draws lines of its own beside the guide: {lines:?}");
+    assert!(lines.iter().all(|&i| i < ants), "every grid line and guide ({lines:?}) draws before the ants ({ants})");
 }
 
 #[test]
