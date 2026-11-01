@@ -722,6 +722,7 @@ fn legacy_brit_without_cged() {
 fn be32_at_the_end_of_usize_reads_nothing() {
     assert_eq!(be32(&[0, 0, 1, 0], 0), Some(256));
     assert_eq!(be32(&[0; 8], usize::MAX), None);
+    assert_eq!(be32(&[0; 8], usize::MAX - 1), None);
     assert_eq!(be32(&[0; 8], usize::MAX - 2), None);
     assert_eq!(be16(&[1, 2], 0), Some(258));
     assert_eq!(be16(&[0; 4], usize::MAX), None);

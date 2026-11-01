@@ -40,6 +40,15 @@ fn sample<const N: usize>(plane: &[u8], i: usize) -> Option<[u8; N]> {
     plane.get(start..start.checked_add(N)?)?.try_into().ok()
 }
 
+/// Can a plane of `n` samples be read here: do its decoded values keep to the decoder's byte
+/// budget, and does that count of bytes fit a `usize` and an `isize`? An 8-bit plane within the
+/// budget can still need four times as many bytes once it is `f32`s, and on wasm32 a plane a
+/// 64-bit host reads happily need not fit a 32-bit `usize` at all (#8615).
+fn plane_fits(n: usize) -> bool {
+    n.checked_mul(std::mem::size_of::<f32>())
+        .is_some_and(|bytes| u64::try_from(bytes).is_ok_and(|b| b <= photocraft_psd::compression::MAX_DECODED_BYTES) && isize::try_from(bytes).is_ok())
+}
+
 /// Fills `doc` (already in Multichannel mode at the file depth) from the merged planes `all`.
 /// `Err` when the planes are too large to read here: the caller reports the document as
 /// damaged, since its channels are missing.
@@ -49,13 +58,7 @@ pub(crate) fn import(file: &PsdFile, all: &[u8], doc: &mut Document, names: &[St
     let (w, hh) = (h.width as usize, h.height as usize);
     // Checked, as the flattened import's sizes are: on wasm32 `w * hh` need not fit a `usize`
     // (#8615).
-    // The decoded values of one plane keep to the decoder's byte budget too: an 8-bit plane within
-    // it can still need four times as many bytes as `f32`s.
-    let fits = |n: usize| {
-        n.checked_mul(std::mem::size_of::<f32>())
-            .is_some_and(|bytes| u64::try_from(bytes).is_ok_and(|b| b <= photocraft_psd::compression::MAX_DECODED_BYTES) && isize::try_from(bytes).is_ok())
-    };
-    let (Some(n), Some(plane)) = (w.checked_mul(hh).filter(|n| fits(*n)), h.row_bytes().checked_mul(hh)) else {
+    let (Some(n), Some(plane)) = (w.checked_mul(hh).filter(|n| plane_fits(*n)), h.row_bytes().checked_mul(hh)) else {
         return Err("multichannel: the image is too large to read here".into());
     };
     let canvas = Rect::new(0, 0, h.width as i32, h.height as i32);
@@ -236,5 +239,21 @@ mod tests {
         assert_eq!(decode(&[0, 0, 128], 0, SampleType::F32), 0.0);
         assert_eq!(decode(&[], usize::MAX, SampleType::F32), 0.0);
         assert_eq!(decode(&[0xff, 0xff], 0, SampleType::U16), 1.0);
+    }
+
+    /// #8615 review: a plane whose sample count runs past what 32 bits hold is refused, so the
+    /// import says the document is damaged instead of reading past the planes. The budget is in
+    /// decoded bytes, four per sample, and is smaller on a 32-bit target.
+    #[test]
+    fn a_plane_too_large_for_the_decoder_is_refused() {
+        let max = photocraft_psd::compression::MAX_DECODED_BYTES / 4;
+        assert!(plane_fits(4096 * 4096), "a 16 MP plane is read");
+        assert!(plane_fits(usize::try_from(max).unwrap_or(usize::MAX)), "right at the budget");
+        let over = usize::try_from(max + 1).unwrap_or(usize::MAX);
+        assert!(!plane_fits(over), "one sample past it");
+        // 65536 x 65536 is 2^32 samples: a 32-bit `usize` cannot even count them, and four times
+        // that many bytes is past the budget on either target.
+        assert!(!plane_fits(1usize << 32), "a plane that overflows 32 bits");
+        assert!(!plane_fits(usize::MAX), "and the extreme the arithmetic has to survive");
     }
 }
