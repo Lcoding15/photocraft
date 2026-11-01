@@ -486,6 +486,8 @@ pub(super) fn paste_to(id: &str, _: &Value) -> Option<Descriptor> {
     Some(d.with("AntA", enm("Annt", "Anno")))
 }
 
+/// An .atn Merge Visible step: the `Dplc` ("duplicate") flag tells Stamp Visible, which leaves
+/// the merged layers in place, from a plain Merge Visible.
 pub(super) fn merge_visible_from(d: &Descriptor) -> Mapped {
     none(if get_bool(d, "Dplc") == Some(true) { "layer.stampVisible" } else { "layer.mergeVisible" })
 }

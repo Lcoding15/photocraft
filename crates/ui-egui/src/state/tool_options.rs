@@ -340,6 +340,8 @@ pub struct SampleAllLayers {
     pub smudge: bool,
 }
 
+/// Sample All Layers is per tool (#218), so each tool has its own flag and the lookups below
+/// turn a [`Tool`] into the one that belongs to it.
 impl SampleAllLayers {
     /// `tool`'s setting; false for a tool without the option.
     pub fn get(mut self, tool: Tool) -> bool {

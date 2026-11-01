@@ -11,6 +11,7 @@ fn doc(s: &Session) -> &Document {
     &s.active().unwrap().doc
 }
 
+/// A new raster layer filled with `rgba` over `r`, made active, as one undoable step.
 fn add_square(s: &mut Session, r: Rect, rgba: [f32; 4]) -> LayerId {
     s.edit("sq", |doc, active| {
         let fmt = doc.pixel_format();
