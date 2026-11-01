@@ -546,7 +546,10 @@ fn paint_canvas(app: &mut PhotocraftApp, ui: &egui::Ui, view: &View, xf: ViewXfo
     // in (`layer_edges_rect`), so a press that Auto-Selects a layer outlines that layer.
     let layer_edges = painter.add(egui::Shape::Noop);
 
-    paint_selection_outline(app, SelectionPaintInput { ctx, painter, ui, view, xf, rect, doc, idx });
+    // The main window draws the ants over its grid and guides (`paint_primary_overlays`).
+    if !input.primary {
+        paint_selection_outline(app, SelectionPaintInput { ctx, painter, ui, view, xf, rect, doc, idx });
+    }
 
     (beyond, layer_edges, edge_rect)
 }
@@ -1244,6 +1247,9 @@ struct CanvasOverlayInput<'a> {
     edge_rect: Rect,
     panning: bool,
     zoom_out: &'a dyn Fn(bool) -> bool,
+    /// The canvas widget's rect and the view as painted, for the selection outline.
+    rect: Rect,
+    display_view: &'a View,
 }
 
 fn paint_primary_overlays(app: &mut PhotocraftApp, ui: &mut egui::Ui, view: &mut View, input: &CanvasOverlayInput<'_>) {
@@ -1267,6 +1273,9 @@ fn paint_primary_overlays(app: &mut PhotocraftApp, ui: &mut egui::Ui, view: &mut
     if app.ui.view.shows(app.ui.view.show.canvas_guides) || crate::guide_layout_ui::preview(app, doc).is_some() {
         crate::rulers::draw_guides(app, painter, xf, doc);
     }
+    // The marching ants go over the grid and guides, as in Photoshop: a guide along a selection's
+    // edge hid the ants at the zoom levels where both fell on the same pixels (#10671).
+    paint_selection_outline(app, SelectionPaintInput { ctx, painter, ui, view: input.display_view, xf: *xf, rect: input.rect, doc, idx });
     // The pending crop frame shows on its own document only, not on the other tiles (#1918).
     let foreign_crop = if app.session.active_index() == Some(idx) { None } else { app.ui.crop_rect.take() };
     draw_drag_preview(app, painter, xf);
@@ -2035,6 +2044,8 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             edge_rect,
             panning,
             zoom_out: &zoom_out,
+            rect,
+            display_view: &display_view,
         };
         paint_primary_overlays(app, ui, &mut view, &input);
     }

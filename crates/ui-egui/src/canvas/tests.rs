@@ -2567,6 +2567,46 @@ fn guides_draw_over_the_transform_preview_and_under_its_box() {
 }
 
 #[test]
+fn the_selection_ants_draw_over_the_guides_and_grid() {
+    // #10671: a guide along a selection's edge was drawn after the marching ants, hiding them at
+    // the zoom levels where both fell on the same screen pixels. The ants go over guides and grid.
+    let ctx = egui::Context::default();
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+    app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
+    app.run("select.rect", json!({"x": 100, "y": 100, "width": 100, "height": 60})).unwrap();
+    app.run("view.newGuide", json!({"orientation": "vertical", "position": 100})).unwrap();
+    app.ui.extras.guides = true;
+    app.ui.extras.grid = true;
+    app.ui.extras.rulers = false;
+    app.sync_views();
+    let mut view = app.ui.views[0].clone();
+    view.zoom = 1.0;
+    view.center = [200.0, 150.0];
+    view.fit_pending = false;
+    view.fill_pending = false;
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+    let input = egui::RawInput { screen_rect: Some(rect), ..Default::default() };
+    let mut out = ctx.run_ui(input, |ui| {
+        canvas_view(&mut app, ui, 0, rect, view.clone(), true);
+    });
+    out.textures_delta.clear();
+    // At 100 % centred on the document, screen and document coordinates coincide.
+    let selection = Rect::from_min_max(pos2(100.0, 100.0), pos2(200.0, 160.0));
+    let near = |r: Rect| (r.min - selection.min).length() < 2.0 && (r.max - selection.max).length() < 2.0;
+    let shapes: Vec<&egui::Shape> = out.shapes.iter().map(|s| &s.shape).collect();
+    // The ants: an untextured mesh of dashes round the selection.
+    let ants = shapes.iter().position(|s| matches!(s, egui::Shape::Mesh(m) if m.texture_id == egui::TextureId::default() && near(m.calc_bounds())));
+    // The guide: the vertical line at x = 100, along the selection's left edge.
+    let guide = shapes
+        .iter()
+        .rposition(|s| matches!(s, egui::Shape::LineSegment { points, .. } if points.iter().all(|p| (p.x - 100.0).abs() < 0.01) && points[0].y != points[1].y));
+    let (Some(ants), Some(guide)) = (ants, guide) else {
+        panic!("both painted: ants {ants:?}, guide {guide:?}");
+    };
+    assert!(guide < ants, "the ants ({ants}) draw over the guide ({guide})");
+}
+
+#[test]
 fn guides_draw_over_the_puppet_perspective_and_vanishing_point_previews() {
     // #7781: like Free Transform's (#5086), the warped pixels of Puppet Warp and Perspective
     // Warp and Vanishing Point's paste are image content. They were drawn with their pins and
