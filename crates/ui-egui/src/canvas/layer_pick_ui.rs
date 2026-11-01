@@ -344,4 +344,23 @@ mod tests {
             assert!(row.top() >= rect.top() - 0.5 && row.bottom() <= rect.bottom() + 0.5, "Layer {i} is in view: {row:?} in {rect:?}");
         }
     }
+
+    /// #10467 review: the width is measured from the names every frame (`ui.set_width`), not kept
+    /// with the area, so a layer renamed between two openings at the same place is shown at the
+    /// width its new name needs.
+    #[test]
+    fn a_renamed_layer_widens_the_menu_at_the_same_place() {
+        let (mut a, ..) = app();
+        let at = [300.0, 200.0];
+        a.ui.layer_menu = Some(LayerMenu { pos: at, layers: vec![(1, "A".into()), (2, "B".into())] });
+        let mut h = Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(|ui, app: &mut PhotocraftApp| show(app, ui.ctx()), a);
+        h.run_steps(4);
+        let width = |h: &Harness<'static, PhotocraftApp>| h.ctx.memory(|m| m.area_rect(menu_id())).expect("the menu is shown").width();
+        let short = width(&h);
+        // The same two layer ids at the same place, one of them renamed to something far longer.
+        let long = "A layer with a decidedly long name".to_owned();
+        h.state_mut().ui.layer_menu = Some(LayerMenu { pos: at, layers: vec![(1, long), (2, "B".into())] });
+        h.run_steps(4);
+        assert!(width(&h) > short + 20.0, "the menu widened for the longer name: {short} to {}", width(&h));
+    }
 }
