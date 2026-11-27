@@ -83,6 +83,7 @@ mod smart_corpus;
 mod source_images;
 mod streaming_exr;
 mod svg;
+mod svg_export;
 mod text_corpus;
 mod text_styles;
 mod tiff_banded_import;

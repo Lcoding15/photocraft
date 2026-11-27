@@ -6875,6 +6875,7 @@ dependencies = [
 name = "photocraft-io"
 version = "0.23.1"
 dependencies = [
+ "base64 0.23.1",
  "blake3",
  "craft",
  "craft-affinity",

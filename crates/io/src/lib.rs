@@ -83,6 +83,7 @@ pub use renderer::{BandRenderer, CpuRenderer, RenderBand, RenderError};
 pub mod slices_map;
 pub mod smart_map;
 pub mod svg;
+mod svg_export;
 mod text_import;
 pub mod text_styles_map;
 pub mod tiff_layers;
@@ -1243,6 +1244,14 @@ fn export_stages_with_renderer(
         let mut res = pdf::export_with(doc, opts.pdf_spot_plates, xmp, ctl)?;
         if let Some(r) = renderer {
             res.warnings.push("PDF export uses CPU compositor; GPU rendering applies to flat formats".into());
+            res.warnings.extend(r.drain_diagnostics());
+        }
+        return Ok(res.into());
+    }
+    if ext == "svg" || ext == "svgz" {
+        let mut res = svg_export::export(doc, ext == "svgz", opts)?;
+        if let Some(r) = renderer {
+            res.warnings.push("SVG export uses CPU compositor; GPU rendering applies to flat formats".into());
             res.warnings.extend(r.drain_diagnostics());
         }
         return Ok(res.into());
